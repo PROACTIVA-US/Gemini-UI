@@ -10,6 +10,7 @@ class TestExecutorAgent {
     this.context = null;
     this.page = null;
     this.screenshotCount = 0;
+    this.networkRequests = [];
   }
 
   async initialize() {
@@ -32,12 +33,21 @@ class TestExecutorAgent {
       this.logger.debug(`Browser console: ${msg.text()}`);
     });
 
+    // Enable network request tracking
+    this.page.on('request', request => {
+      this.networkRequests.push({
+        url: request.url(),
+        method: request.method(),
+        headers: request.headers()
+      });
+    });
+
     this.logger.success('Browser initialized');
   }
 
   async navigate(url) {
     this.logger.info(`Navigating to ${url}`);
-    await this.page.goto(url, { waitUntil: 'networkidle' });
+    await this.page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     this.logger.success(`Navigated to ${url}`);
   }
 
@@ -93,17 +103,13 @@ class TestExecutorAgent {
     };
   }
 
+  /**
+   * Returns a copy of all network requests captured since browser initialization.
+   * Network requests are tracked via event listener set up in initialize() method.
+   * @returns {Array<{url: string, method: string, headers: Object}>} Array of captured network requests
+   */
   async getNetworkLogs() {
-    // Playwright doesn't have direct HAR export, but we can capture requests
-    const requests = [];
-    this.page.on('request', request => {
-      requests.push({
-        url: request.url(),
-        method: request.method(),
-        headers: request.headers()
-      });
-    });
-    return requests;
+    return [...this.networkRequests];
   }
 
   async waitFor(condition, timeout = 10000) {
