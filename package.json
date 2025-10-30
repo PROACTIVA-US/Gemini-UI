@@ -1,0 +1,24 @@
+{
+  "name": "gemini-oauth-automation",
+  "version": "2.0.0",
+  "description": "Autonomous OAuth testing with Gemini Computer Use",
+  "main": "src/orchestrator.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node src/orchestrator.js --provider github --debug",
+    "test:all": "node src/orchestrator.js --all",
+    "test:github": "node src/orchestrator.js --provider github",
+    "test:google": "node src/orchestrator.js --provider google"
+  },
+  "keywords": ["gemini", "oauth", "testing", "automation"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@vercel/client": "^17.1.4",
+    "dotenv": "^17.2.3",
+    "har-validator": "^5.1.5",
+    "playwright": "^1.56.0",
+    "simple-git": "^3.20.0"
+  }
+}
