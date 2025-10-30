@@ -42,7 +42,13 @@ class Logger {
 
   saveLogs(filepath) {
     const fs = require('fs');
-    fs.writeFileSync(filepath, JSON.stringify(this.logs, null, 2));
+    try {
+      fs.writeFileSync(filepath, JSON.stringify(this.logs, null, 2));
+      console.log(`Logs saved successfully to ${filepath}`);
+    } catch (error) {
+      console.error(`Failed to save logs to ${filepath}:`, error.message);
+      throw error;
+    }
   }
 }
 

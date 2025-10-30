@@ -33,6 +33,11 @@ class StateMachine {
     return false;
   }
 
+  /**
+   * Attempts to retry the current state.
+   * Note: maxRetries=3 means 4 total attempts (1 initial + 3 retries).
+   * @returns {boolean} True if retry is allowed, false if max retries exceeded
+   */
   retry() {
     this.retryCount++;
     if (this.retryCount >= this.maxRetries) {
@@ -47,6 +52,12 @@ class StateMachine {
     return true;
   }
 
+  /**
+   * Checks if the state machine has completed all states.
+   * Note: This checks if we're AT the last state, not if we've advanced PAST it.
+   * The machine is considered complete when currentIndex equals (states.length - 1).
+   * @returns {boolean} True if at the final state, false otherwise
+   */
   isComplete() {
     return this.currentIndex === this.states.length - 1;
   }
