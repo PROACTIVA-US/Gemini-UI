@@ -1,7 +1,19 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const VercelAPI = require('../utils/vercel-api');
 
+/**
+ * Diagnostic Agent for analyzing OAuth authentication errors
+ * Uses Gemini AI to perform root cause analysis by examining error context,
+ * screenshots, network logs, and Vercel deployment logs.
+ */
 class DiagnosticAgent {
+  /**
+   * Create a new DiagnosticAgent instance
+   * @param {Object} logger - Logger instance for output
+   * @param {string} apiKey - Google AI API key for Gemini
+   * @param {string} vercelToken - Vercel API token for deployment access
+   * @param {string} vercelProjectId - Vercel project ID
+   */
   constructor(logger, apiKey, vercelToken, vercelProjectId) {
     this.logger = logger;
     this.genAI = new GoogleGenerativeAI(apiKey);
@@ -11,10 +23,33 @@ class DiagnosticAgent {
     this.vercelApi = new VercelAPI(vercelToken, vercelProjectId);
   }
 
+  /**
+   * Diagnose the root cause of an OAuth authentication error
+   * @param {Object} errorContext - Context information about the error
+   * @param {string} errorContext.screenshot - Base64 encoded screenshot
+   * @param {Object} errorContext.errorAnalysis - Previous error analysis
+   * @param {Array} errorContext.networkLogs - Network request logs
+   * @param {string} errorContext.pageUrl - URL where error occurred
+   * @returns {Promise<Object>} Diagnostic result with root cause, evidence, and fix suggestions
+   * @throws {Error} If validation fails or diagnosis cannot be completed
+   */
   async diagnoseRootCause(errorContext) {
     this.logger.info('Running root cause diagnosis...');
 
+    // Input validation
+    if (!errorContext || typeof errorContext !== 'object') {
+      throw new Error('errorContext must be a valid object');
+    }
+
     const { screenshot, errorAnalysis, networkLogs, pageUrl } = errorContext;
+
+    // Validate required fields
+    if (!errorAnalysis) {
+      throw new Error('errorContext.errorAnalysis is required');
+    }
+    if (!pageUrl || typeof pageUrl !== 'string') {
+      throw new Error('errorContext.pageUrl must be a valid string');
+    }
 
     // Fetch Vercel logs
     let vercelLogs = null;
@@ -80,12 +115,26 @@ Respond in JSON format:
 
       this.logger.debug('Diagnostic response:', text);
 
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
-      }
+      // Improved JSON parsing with better regex and error handling
+      let diagnostic;
+      try {
+        // Try to find JSON object in response, looking for complete object with proper nesting
+        const jsonMatch = text.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+        if (!jsonMatch) {
+          throw new Error('No JSON found in response');
+        }
 
-      const diagnostic = JSON.parse(jsonMatch[0]);
+        diagnostic = JSON.parse(jsonMatch[0]);
+
+        // Validate expected structure
+        if (!diagnostic.rootCause || !diagnostic.confidence) {
+          throw new Error('Diagnostic response missing required fields (rootCause, confidence)');
+        }
+      } catch (parseError) {
+        this.logger.error('Failed to parse diagnostic response:', parseError.message);
+        this.logger.debug('Raw response:', text);
+        throw new Error(`Failed to parse diagnostic response: ${parseError.message}`);
+      }
 
       this.logger.success(`Root cause identified: ${diagnostic.rootCause} (confidence: ${diagnostic.confidence})`);
 
@@ -96,8 +145,26 @@ Respond in JSON format:
     }
   }
 
+  /**
+   * Check OAuth configuration for a specific provider
+   * Validates presence of required environment variables
+   * @param {string} provider - OAuth provider name ('github', 'google', etc.)
+   * @returns {Promise<Object>} Configuration check results
+   * @throws {Error} If provider is not supported
+   */
   async checkOAuthConfig(provider) {
     this.logger.info(`Checking OAuth config for ${provider}...`);
+
+    // Validate provider input
+    const supportedProviders = ['github', 'google'];
+    if (!provider || typeof provider !== 'string') {
+      throw new Error('provider must be a valid string');
+    }
+
+    const normalizedProvider = provider.toLowerCase();
+    if (!supportedProviders.includes(normalizedProvider)) {
+      throw new Error(`Unsupported provider: ${provider}. Supported providers: ${supportedProviders.join(', ')}`);
+    }
 
     // Read .env.local from Veria project if available
     const envPath = process.env.VERIA_PROJECT_PATH
@@ -105,13 +172,13 @@ Respond in JSON format:
       : null;
 
     const config = {
-      provider,
+      provider: normalizedProvider,
       envPath,
       checks: []
     };
 
-    // Basic validation
-    if (provider === 'github') {
+    // Provider-specific validation
+    if (normalizedProvider === 'github') {
       config.checks.push({
         name: 'GITHUB_CLIENT_ID',
         status: process.env.GITHUB_CLIENT_ID ? 'present' : 'missing'
@@ -120,7 +187,26 @@ Respond in JSON format:
         name: 'GITHUB_CLIENT_SECRET',
         status: process.env.GITHUB_CLIENT_SECRET ? 'present' : 'missing'
       });
+    } else if (normalizedProvider === 'google') {
+      config.checks.push({
+        name: 'GOOGLE_CLIENT_ID',
+        status: process.env.GOOGLE_CLIENT_ID ? 'present' : 'missing'
+      });
+      config.checks.push({
+        name: 'GOOGLE_CLIENT_SECRET',
+        status: process.env.GOOGLE_CLIENT_SECRET ? 'present' : 'missing'
+      });
     }
+
+    // Common NextAuth variables
+    config.checks.push({
+      name: 'NEXTAUTH_URL',
+      status: process.env.NEXTAUTH_URL ? 'present' : 'missing'
+    });
+    config.checks.push({
+      name: 'NEXTAUTH_SECRET',
+      status: process.env.NEXTAUTH_SECRET ? 'present' : 'missing'
+    });
 
     this.logger.success('Config check complete', config);
     return config;
