@@ -9,6 +9,120 @@ class VisionAnalystAgent {
     });
   }
 
+  /**
+   * Extract JSON from Gemini response text with multiple fallback strategies
+   * @private
+   * @param {string} text - Raw response text from Gemini
+   * @returns {Object} Parsed JSON object
+   * @throws {Error} If no valid JSON can be extracted
+   */
+  _extractJSON(text) {
+    // Strategy 1: Try to extract JSON from code block (```json...```)
+    const codeBlockMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (codeBlockMatch) {
+      try {
+        return JSON.parse(codeBlockMatch[1]);
+      } catch (e) {
+        this.logger.debug('Failed to parse JSON from code block', e.message);
+      }
+    }
+
+    // Strategy 2: Try to extract JSON objects and parse them in order
+    // Use greedy match to get larger JSON objects first
+    const jsonMatches = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g);
+    if (jsonMatches) {
+      // Sort by length descending to try larger/more complete objects first
+      const sortedMatches = jsonMatches.sort((a, b) => b.length - a.length);
+      for (const match of sortedMatches) {
+        try {
+          return JSON.parse(match);
+        } catch (e) {
+          this.logger.debug('Failed to parse JSON candidate', e.message);
+        }
+      }
+    }
+
+    // Strategy 3: Try to find JSON between specific markers or at start/end
+    const trimmed = text.trim();
+    if (trimmed.startsWith('{') && trimmed.includes('}')) {
+      const lastBrace = trimmed.lastIndexOf('}');
+      try {
+        return JSON.parse(trimmed.substring(0, lastBrace + 1));
+      } catch (e) {
+        this.logger.debug('Failed to parse trimmed JSON', e.message);
+      }
+    }
+
+    throw new Error('No valid JSON found in response');
+  }
+
+  /**
+   * Validate that the analysis response contains all required fields
+   * @private
+   * @param {Object} analysis - Parsed analysis object
+   * @throws {Error} If required fields are missing or invalid
+   */
+  _validateAnalysisResponse(analysis) {
+    const required = ['actualState', 'matches', 'confidence', 'errorDetected', 'nextAction', 'reasoning'];
+    const missing = required.filter(field => !(field in analysis));
+
+    if (missing.length > 0) {
+      throw new Error(`Missing required fields in analysis response: ${missing.join(', ')}`);
+    }
+
+    if (typeof analysis.matches !== 'boolean') {
+      throw new Error('Field "matches" must be a boolean');
+    }
+
+    if (typeof analysis.errorDetected !== 'boolean') {
+      throw new Error('Field "errorDetected" must be a boolean');
+    }
+
+    if (typeof analysis.confidence !== 'number' || analysis.confidence < 0 || analysis.confidence > 1) {
+      throw new Error('Field "confidence" must be a number between 0 and 1');
+    }
+
+    if (!analysis.nextAction || typeof analysis.nextAction !== 'object') {
+      throw new Error('Field "nextAction" must be an object');
+    }
+
+    if (!analysis.nextAction.type || !analysis.nextAction.reasoning) {
+      throw new Error('nextAction must contain "type" and "reasoning" fields');
+    }
+  }
+
+  /**
+   * Validate that the error detection response contains all required fields
+   * @private
+   * @param {Object} errorAnalysis - Parsed error analysis object
+   * @throws {Error} If required fields are missing or invalid
+   */
+  _validateErrorResponse(errorAnalysis) {
+    const required = ['errorDetected', 'errorType', 'severity', 'suggestedAgent', 'reasoning'];
+    const missing = required.filter(field => !(field in errorAnalysis));
+
+    if (missing.length > 0) {
+      throw new Error(`Missing required fields in error response: ${missing.join(', ')}`);
+    }
+
+    if (typeof errorAnalysis.errorDetected !== 'boolean') {
+      throw new Error('Field "errorDetected" must be a boolean');
+    }
+
+    const validSeverities = ['critical', 'high', 'medium', 'low'];
+    if (!validSeverities.includes(errorAnalysis.severity)) {
+      throw new Error(`Field "severity" must be one of: ${validSeverities.join(', ')}`);
+    }
+  }
+
+  /**
+   * Analyze a screenshot to determine the current state of the OAuth flow
+   * @param {string} screenshot - Base64-encoded screenshot image
+   * @param {string} expectedState - The expected state (landing|provider_auth|callback|dashboard|error)
+   * @param {Object} context - Additional context about the test
+   * @returns {Promise<Object>} Analysis result with actualState, matches, confidence, errorDetected, nextAction, and reasoning
+   * @throws {Error} If analysis fails or response is invalid
+   */
   async analyzeState(screenshot, expectedState, context = {}) {
     this.logger.info(`Analyzing state (expected: ${expectedState})`);
 
@@ -56,13 +170,11 @@ Respond in JSON format:
 
       this.logger.debug('Gemini response:', text);
 
-      // Parse JSON response
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
-      }
+      // Extract and parse JSON with robust extraction
+      const analysis = this._extractJSON(text);
 
-      const analysis = JSON.parse(jsonMatch[0]);
+      // Validate response schema
+      this._validateAnalysisResponse(analysis);
 
       this.logger.success(`Analysis complete: ${analysis.actualState} (confidence: ${analysis.confidence})`);
 
@@ -73,6 +185,13 @@ Respond in JSON format:
     }
   }
 
+  /**
+   * Detect errors in a screenshot from the OAuth flow
+   * @param {string} screenshot - Base64-encoded screenshot image
+   * @param {Object} context - Additional context about the test
+   * @returns {Promise<Object>} Error analysis with errorDetected, errorType, errorMessage, severity, suggestedAgent, and reasoning
+   * @throws {Error} If error detection fails or response is invalid
+   */
   async detectError(screenshot, context = {}) {
     this.logger.info('Running error detection...');
 
@@ -113,12 +232,11 @@ Respond in JSON format:
       const response = await result.response;
       const text = response.text();
 
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
-      }
+      // Extract and parse JSON with robust extraction
+      const errorAnalysis = this._extractJSON(text);
 
-      const errorAnalysis = JSON.parse(jsonMatch[0]);
+      // Validate response schema
+      this._validateErrorResponse(errorAnalysis);
 
       if (errorAnalysis.errorDetected) {
         this.logger.error(`Error detected: ${errorAnalysis.errorType}`, errorAnalysis.errorMessage);
