@@ -1,0 +1,43 @@
+{
+  "baseUrl": "https://veria.cc",
+  "providers": [
+    {
+      "name": "github",
+      "enabled": true,
+      "testAccount": {
+        "username": "process.env.GITHUB_TEST_USER",
+        "password": "process.env.GITHUB_TEST_PASS"
+      },
+      "flow": ["landing", "provider_auth", "callback", "dashboard"]
+    },
+    {
+      "name": "google",
+      "enabled": true,
+      "testAccount": {
+        "email": "process.env.GOOGLE_TEST_EMAIL",
+        "password": "process.env.GOOGLE_TEST_PASS"
+      },
+      "flow": ["landing", "provider_auth", "callback", "dashboard"]
+    }
+  ],
+  "states": {
+    "landing": {
+      "expect": "Sign in buttons visible",
+      "timeout": 10000
+    },
+    "provider_auth": {
+      "expect": "Provider login page loaded",
+      "timeout": 15000
+    },
+    "callback": {
+      "expect": "Redirecting to dashboard or error detected",
+      "timeout": 10000
+    },
+    "dashboard": {
+      "expect": "User logged in, API keys or dashboard visible",
+      "timeout": 10000
+    }
+  },
+  "maxRetries": 3,
+  "defaultTimeout": 30000
+}
