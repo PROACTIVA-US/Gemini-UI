@@ -1,3 +1,14 @@
+/**
+ * @deprecated This agent has been replaced by ComputerUseAgent (src/agents/computer-use.js)
+ * which uses the Gemini Computer Use API for direct browser control.
+ *
+ * Vision Analyst was used to analyze screenshots and suggest actions, but had a
+ * "translation gap" between vision analysis and test execution. Computer Use API
+ * eliminates this gap by providing direct coordinate-based browser control.
+ *
+ * Kept for reference only. Do not use in new code.
+ */
+
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 class VisionAnalystAgent {

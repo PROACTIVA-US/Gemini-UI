@@ -6,7 +6,7 @@ Autonomous multi-agent system for testing OAuth flows using Gemini Computer Use 
 
 - **Orchestrator**: Coordinates all agents through state machine
 - **Test Executor**: Controls Playwright browser automation
-- **Vision Analyst**: Analyzes screenshots with Gemini vision
+- **Computer Use Agent**: Direct browser control via Gemini Computer Use API
 - **Diagnostic Agent**: Root cause analysis of OAuth errors
 - **Fix Agent**: Proposes and applies fixes automatically
 

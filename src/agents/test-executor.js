@@ -127,6 +127,119 @@ class TestExecutorAgent {
     this.logger.success('Wait condition met');
   }
 
+  /**
+   * Execute a Computer Use action
+   * @param {object} action - Action from Computer Use API
+   * @returns {Promise<object>} Execution result
+   */
+  async executeComputerUseAction(action) {
+    // Validate action object
+    if (!action || typeof action !== 'object') {
+      this.logger.error('Invalid action: action must be an object');
+      return { success: false, actionName: 'unknown', error: 'Invalid action format' };
+    }
+
+    if (!action.name || typeof action.name !== 'string') {
+      this.logger.error('Invalid action: missing or invalid name');
+      return { success: false, actionName: 'unknown', error: 'Missing action name' };
+    }
+
+    const { name, args } = action;
+
+    // Validate args for actions that require them
+    if (!args && ['click_at', 'type_text_at', 'scroll_document', 'navigate', 'key_combination', 'hover_at'].includes(name)) {
+      this.logger.error(`Action ${name} requires args`);
+      return { success: false, actionName: name, error: 'Missing action arguments' };
+    }
+
+    this.logger.info(`Executing Computer Use action: ${name}`);
+
+    try {
+      switch (name) {
+        case 'click_at':
+          // Validate coordinates
+          if (typeof args.x !== 'number' || typeof args.y !== 'number') {
+            return { success: false, actionName: name, error: 'Invalid coordinate types' };
+          }
+          if (args.x < 0 || args.x > 1000 || args.y < 0 || args.y > 1000) {
+            return { success: false, actionName: name, error: `Coordinates out of bounds: (${args.x}, ${args.y})` };
+          }
+
+          // Convert normalized coordinates (0-999) to actual pixel coordinates
+          const clickX = (args.x / 1000) * this.page.viewportSize().width;
+          const clickY = (args.y / 1000) * this.page.viewportSize().height;
+          await this.page.mouse.click(clickX, clickY);
+          return { success: true, action: name, actionName: name };
+
+        case 'type_text_at':
+          // Validate coordinates and text
+          if (typeof args.x !== 'number' || typeof args.y !== 'number') {
+            return { success: false, actionName: name, error: 'Invalid coordinate types' };
+          }
+          if (args.x < 0 || args.x > 1000 || args.y < 0 || args.y > 1000) {
+            return { success: false, actionName: name, error: `Coordinates out of bounds: (${args.x}, ${args.y})` };
+          }
+          if (!args.text || typeof args.text !== 'string') {
+            return { success: false, actionName: name, error: 'Missing or invalid text' };
+          }
+
+          const typeX = (args.x / 1000) * this.page.viewportSize().width;
+          const typeY = (args.y / 1000) * this.page.viewportSize().height;
+          await this.page.mouse.click(typeX, typeY);
+          await this.page.keyboard.type(args.text);
+          if (args.press_enter) {
+            await this.page.keyboard.press('Enter');
+          }
+          return { success: true, action: name, actionName: name, text: args.text };
+
+        case 'scroll_document':
+          await this.page.evaluate((direction) => {
+            const distance = direction === 'down' ? 500 : -500;
+            window.scrollBy(0, distance);
+          }, args.direction);
+          return { success: true, action: name, actionName: name, direction: args.direction };
+
+        case 'navigate':
+          await this.navigate(args.url);
+          return { success: true, action: name, actionName: name, url: args.url };
+
+        case 'key_combination':
+          // Parse key combination (e.g., "Control+C")
+          await this.page.keyboard.press(args.keys);
+          return { success: true, action: name, actionName: name, keys: args.keys };
+
+        case 'go_back':
+          await this.page.goBack();
+          return { success: true, action: name, actionName: name };
+
+        case 'go_forward':
+          await this.page.goForward();
+          return { success: true, action: name, actionName: name };
+
+        case 'hover_at':
+          // Validate coordinates
+          if (typeof args.x !== 'number' || typeof args.y !== 'number') {
+            return { success: false, actionName: name, error: 'Invalid coordinate types' };
+          }
+          if (args.x < 0 || args.x > 1000 || args.y < 0 || args.y > 1000) {
+            return { success: false, actionName: name, error: `Coordinates out of bounds: (${args.x}, ${args.y})` };
+          }
+
+          const hoverX = (args.x / 1000) * this.page.viewportSize().width;
+          const hoverY = (args.y / 1000) * this.page.viewportSize().height;
+          await this.page.mouse.move(hoverX, hoverY);
+          return { success: true, action: name, actionName: name };
+
+        default:
+          this.logger.error(`Unknown Computer Use action: ${name}`);
+          return { success: false, action: name, actionName: name, error: 'Unknown action' };
+      }
+    } catch (error) {
+      this.logger.error(`Failed to execute ${name}:`, error.message);
+      return { success: false, action: name, actionName: name, error: error.message };
+    }
+  }
+
   async cleanup() {
     this.logger.info('Cleaning up browser...');
     if (this.context) {
