@@ -24,12 +24,14 @@ class OAuthOrchestrator {
    * @param {string} [options.provider] - Specific provider name(s) to test (comma-separated)
    * @param {boolean} [options.debug=false] - Enable debug logging
    * @param {boolean} [options.autoFix=false] - Automatically apply fixes without approval
+   * @param {number} [options.actionDelay=2000] - Delay between actions in milliseconds
    */
   constructor(options = {}) {
     this.options = options;
     this.logger = new Logger(options.debug || false);
     this.config = null;
     this.outputDir = null;
+    this.actionDelay = options.actionDelay || 2000; // Configurable delay between actions
   }
 
   async loadConfig() {
@@ -173,8 +175,8 @@ class OAuthOrchestrator {
           }
         }
 
-        // Brief pause between states
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Brief pause between states (configurable)
+        await new Promise(resolve => setTimeout(resolve, this.actionDelay));
       }
 
       await testExecutor.cleanup();

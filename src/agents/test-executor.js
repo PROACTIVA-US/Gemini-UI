@@ -133,13 +133,38 @@ class TestExecutorAgent {
    * @returns {Promise<object>} Execution result
    */
   async executeComputerUseAction(action) {
+    // Validate action object
+    if (!action || typeof action !== 'object') {
+      this.logger.error('Invalid action: action must be an object');
+      return { success: false, actionName: 'unknown', error: 'Invalid action format' };
+    }
+
+    if (!action.name || typeof action.name !== 'string') {
+      this.logger.error('Invalid action: missing or invalid name');
+      return { success: false, actionName: 'unknown', error: 'Missing action name' };
+    }
+
     const { name, args } = action;
+
+    // Validate args for actions that require them
+    if (!args && ['click_at', 'type_text_at', 'scroll_document', 'navigate', 'key_combination', 'hover_at'].includes(name)) {
+      this.logger.error(`Action ${name} requires args`);
+      return { success: false, actionName: name, error: 'Missing action arguments' };
+    }
 
     this.logger.info(`Executing Computer Use action: ${name}`);
 
     try {
       switch (name) {
         case 'click_at':
+          // Validate coordinates
+          if (typeof args.x !== 'number' || typeof args.y !== 'number') {
+            return { success: false, actionName: name, error: 'Invalid coordinate types' };
+          }
+          if (args.x < 0 || args.x > 1000 || args.y < 0 || args.y > 1000) {
+            return { success: false, actionName: name, error: `Coordinates out of bounds: (${args.x}, ${args.y})` };
+          }
+
           // Convert normalized coordinates (0-999) to actual pixel coordinates
           const clickX = (args.x / 1000) * this.page.viewportSize().width;
           const clickY = (args.y / 1000) * this.page.viewportSize().height;
@@ -147,6 +172,17 @@ class TestExecutorAgent {
           return { success: true, action: name, actionName: name };
 
         case 'type_text_at':
+          // Validate coordinates and text
+          if (typeof args.x !== 'number' || typeof args.y !== 'number') {
+            return { success: false, actionName: name, error: 'Invalid coordinate types' };
+          }
+          if (args.x < 0 || args.x > 1000 || args.y < 0 || args.y > 1000) {
+            return { success: false, actionName: name, error: `Coordinates out of bounds: (${args.x}, ${args.y})` };
+          }
+          if (!args.text || typeof args.text !== 'string') {
+            return { success: false, actionName: name, error: 'Missing or invalid text' };
+          }
+
           const typeX = (args.x / 1000) * this.page.viewportSize().width;
           const typeY = (args.y / 1000) * this.page.viewportSize().height;
           await this.page.mouse.click(typeX, typeY);
@@ -181,6 +217,14 @@ class TestExecutorAgent {
           return { success: true, action: name, actionName: name };
 
         case 'hover_at':
+          // Validate coordinates
+          if (typeof args.x !== 'number' || typeof args.y !== 'number') {
+            return { success: false, actionName: name, error: 'Invalid coordinate types' };
+          }
+          if (args.x < 0 || args.x > 1000 || args.y < 0 || args.y > 1000) {
+            return { success: false, actionName: name, error: `Coordinates out of bounds: (${args.x}, ${args.y})` };
+          }
+
           const hoverX = (args.x / 1000) * this.page.viewportSize().width;
           const hoverY = (args.y / 1000) * this.page.viewportSize().height;
           await this.page.mouse.move(hoverX, hoverY);

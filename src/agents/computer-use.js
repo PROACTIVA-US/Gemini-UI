@@ -5,11 +5,16 @@ const { GoogleGenAI, createPartFromBase64, createPartFromText } = require('@goog
  * Replaces the Vision Analyst Agent with actual browser control capabilities
  */
 class ComputerUseAgent {
-  constructor(logger, apiKey) {
+  constructor(logger, apiKey, options = {}) {
+    if (!apiKey) {
+      throw new Error('API key is required for ComputerUseAgent');
+    }
+
     this.logger = logger;
     this.client = new GoogleGenAI({ apiKey });
-    this.model = 'gemini-2.5-computer-use-preview-10-2025';
+    this.model = options.model || process.env.COMPUTER_USE_MODEL || 'gemini-2.5-computer-use-preview-10-2025';
     this.conversationHistory = [];
+    this.maxHistoryLength = options.maxHistoryLength || 10; // Limit history to prevent memory issues
   }
 
   /**
@@ -49,21 +54,29 @@ class ComputerUseAgent {
         }
       });
 
-      // Debug: Log full response structure
-      this.logger.debug('Full API response:', JSON.stringify(response, null, 2));
+      // Validate response structure
+      if (!response.candidates || response.candidates.length === 0) {
+        this.logger.error('No candidates in API response');
+        return null;
+      }
 
-      // Extract function call from response (check both snake_case and camelCase)
+      if (!response.candidates[0].content || !response.candidates[0].content.parts) {
+        this.logger.error('Invalid response structure');
+        return null;
+      }
+
+      // Extract function call from response
       const functionCall = response.candidates[0].content.parts.find(
-        part => part.functionCall || part.function_call
+        part => part.functionCall
       );
 
       if (!functionCall) {
         this.logger.error('No function call in response');
-        this.logger.debug('Response parts:', response.candidates[0].content.parts);
+        this.logger.debug('Response parts count:', response.candidates[0].content.parts.length);
         return null;
       }
 
-      const action = functionCall.functionCall || functionCall.function_call;
+      const action = functionCall.functionCall;
 
       // Add to conversation history
       this.conversationHistory.push({
@@ -74,6 +87,12 @@ class ComputerUseAgent {
         role: 'model',
         parts: [{ functionCall: action }]
       });
+
+      // Prune history to prevent memory issues (keep only recent turns)
+      if (this.conversationHistory.length > this.maxHistoryLength * 2) {
+        this.conversationHistory = this.conversationHistory.slice(-this.maxHistoryLength * 2);
+        this.logger.debug(`Pruned conversation history to ${this.maxHistoryLength} turns`);
+      }
 
       this.logger.success(`Action received: ${action.name}`);
       this.logger.debug('Action details:', action);
