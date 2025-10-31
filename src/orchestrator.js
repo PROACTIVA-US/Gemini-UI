@@ -5,7 +5,7 @@ const fs = require('fs').promises;
 const path = require('path');
 
 const TestExecutorAgent = require('./agents/test-executor');
-const VisionAnalystAgent = require('./agents/vision-analyst');
+const ComputerUseAgent = require('./agents/computer-use');
 const DiagnosticAgent = require('./agents/diagnostic');
 const FixAgent = require('./agents/fix');
 const StateMachine = require('./utils/state-machine');
@@ -13,8 +13,8 @@ const Logger = require('./utils/logger');
 
 /**
  * OAuthOrchestrator coordinates multi-agent OAuth flow testing with automatic fix capabilities.
- * Manages the complete testing lifecycle including test execution, vision analysis, diagnostics,
- * and automated fix proposals.
+ * Manages the complete testing lifecycle including test execution, Computer Use API control,
+ * diagnostics, and automated fix proposals.
  */
 class OAuthOrchestrator {
   /**
@@ -48,7 +48,7 @@ class OAuthOrchestrator {
 
   /**
    * Tests a single OAuth provider through its complete authentication flow.
-   * Coordinates between TestExecutor, VisionAnalyst, Diagnostic, and Fix agents.
+   * Coordinates between TestExecutor, ComputerUse, Diagnostic, and Fix agents.
    * @param {string} providerName - Name of the OAuth provider to test (e.g., 'github', 'google')
    * @returns {Promise<Object>} Test result containing status, provider name, and execution history
    * @throws {Error} If provider not found in config or max retries exceeded
@@ -69,7 +69,7 @@ class OAuthOrchestrator {
 
     // Initialize agents
     const testExecutor = new TestExecutorAgent(this.logger, this.outputDir);
-    const visionAnalyst = new VisionAnalystAgent(this.logger, process.env.GEMINI_API_KEY);
+    const computerUse = new ComputerUseAgent(this.logger, process.env.GEMINI_API_KEY);
     const diagnostic = new DiagnosticAgent(
       this.logger,
       process.env.GEMINI_API_KEY,
@@ -102,63 +102,75 @@ class OAuthOrchestrator {
         // Capture current state
         const capturedState = await testExecutor.captureState();
 
-        // Analyze with Vision
-        const analysis = await visionAnalyst.analyzeState(
+        // Get Computer Use action directly (no translation gap!)
+        const action = await computerUse.getNextAction(
           capturedState.screenshot,
-          currentState,
-          { url: capturedState.metadata.url, provider: providerName }
+          `Navigate through ${currentState} state for ${providerName} OAuth`,
+          {
+            state: currentState,
+            url: capturedState.metadata.url,
+            provider: providerName
+          }
         );
 
-        // Check for errors
-        if (analysis.errorDetected) {
-          this.logger.error('Error detected in current state');
-
-          // Run diagnostics
-          const diagnosticResult = await diagnostic.diagnoseRootCause({
-            screenshot: capturedState.screenshot,
-            errorAnalysis: analysis,
-            networkLogs: await testExecutor.getNetworkLogs(),
-            pageUrl: capturedState.metadata.url
-          });
-
-          // Propose fix
-          const fixPlan = await fix.proposeFixPlan(diagnosticResult);
-          await fix.showDiff(fixPlan);
-
-          // Request approval if needed
-          let approved = false;
-          if (this.options.autoFix) {
-            approved = true;
-            this.logger.info('Auto-fix enabled, applying fix...');
-          } else {
-            // In a real implementation, would prompt user
-            this.logger.info('Fix requires manual approval (use --auto-fix to enable)');
-            approved = false;
+        if (!action) {
+          this.logger.error('No action received from Computer Use API');
+          if (!stateMachine.retry()) {
+            throw new Error(`Failed to get action for state: ${currentState}`);
           }
-
-          if (approved) {
-            await fix.applyFix(fixPlan, true);
-
-            // Retry from beginning
-            this.logger.info('Retrying flow after fix...');
-            stateMachine.reset();
-            await testExecutor.navigate(this.config.baseUrl);
-            continue;
-          } else {
-            throw new Error('Test failed with error, fix not approved');
-          }
+          continue;
         }
 
-        // Execute next action
-        if (analysis.nextAction) {
-          await this.executeAction(testExecutor, analysis.nextAction, providerConfig);
-        }
+        // Execute Computer Use action directly
+        const result = await testExecutor.executeComputerUseAction(action);
 
-        // Advance state
-        if (analysis.matches || analysis.actualState === currentState) {
+        // Report result back to Gemini
+        await computerUse.reportActionResult(result);
+
+        // Check if action succeeded
+        if (result.success) {
+          this.logger.success(`Action ${action.name} executed successfully`);
           stateMachine.advance();
-        } else if (!stateMachine.retry()) {
-          throw new Error(`Max retries exceeded for state: ${currentState}`);
+        } else {
+          this.logger.error(`Action ${action.name} failed: ${result.error}`);
+
+          // Handle error with diagnostic agent if available
+          if (result.error && diagnostic) {
+            const diagnosticResult = await diagnostic.diagnoseRootCause({
+              screenshot: capturedState.screenshot,
+              errorAnalysis: { errorDetected: true, errorMessage: result.error },
+              networkLogs: await testExecutor.getNetworkLogs(),
+              pageUrl: capturedState.metadata.url
+            });
+
+            // Propose fix
+            const fixPlan = await fix.proposeFixPlan(diagnosticResult);
+            await fix.showDiff(fixPlan);
+
+            // Request approval if needed
+            let approved = false;
+            if (this.options.autoFix) {
+              approved = true;
+              this.logger.info('Auto-fix enabled, applying fix...');
+            } else {
+              this.logger.info('Fix requires manual approval (use --auto-fix to enable)');
+              approved = false;
+            }
+
+            if (approved) {
+              await fix.applyFix(fixPlan, true);
+              this.logger.info('Retrying flow after fix...');
+              stateMachine.reset();
+              computerUse.reset();
+              await testExecutor.navigate(this.config.baseUrl);
+              continue;
+            }
+          }
+
+          // Retry logic
+          if (!stateMachine.retry()) {
+            throw new Error(`Max retries exceeded for state: ${currentState}`);
+          }
         }
 
         // Brief pause between states

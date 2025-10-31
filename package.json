@@ -10,10 +10,16 @@
     "test:github": "node src/orchestrator.js --provider github",
     "test:google": "node src/orchestrator.js --provider google"
   },
-  "keywords": ["gemini", "oauth", "testing", "automation"],
+  "keywords": [
+    "gemini",
+    "oauth",
+    "testing",
+    "automation"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "^1.28.0",
     "@google/generative-ai": "^0.24.1",
     "@vercel/client": "^17.1.4",
     "dotenv": "^17.2.3",
