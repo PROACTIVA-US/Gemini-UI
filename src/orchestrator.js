@@ -11,7 +11,20 @@ const FixAgent = require('./agents/fix');
 const StateMachine = require('./utils/state-machine');
 const Logger = require('./utils/logger');
 
+/**
+ * OAuthOrchestrator coordinates multi-agent OAuth flow testing with automatic fix capabilities.
+ * Manages the complete testing lifecycle including test execution, vision analysis, diagnostics,
+ * and automated fix proposals.
+ */
 class OAuthOrchestrator {
+  /**
+   * Creates a new OAuthOrchestrator instance.
+   * @param {Object} options - Configuration options
+   * @param {boolean} [options.all=false] - Test all enabled providers
+   * @param {string} [options.provider] - Specific provider name(s) to test (comma-separated)
+   * @param {boolean} [options.debug=false] - Enable debug logging
+   * @param {boolean} [options.autoFix=false] - Automatically apply fixes without approval
+   */
   constructor(options = {}) {
     this.options = options;
     this.logger = new Logger(options.debug || false);
@@ -33,6 +46,13 @@ class OAuthOrchestrator {
     this.logger.success(`Output directory: ${this.outputDir}`);
   }
 
+  /**
+   * Tests a single OAuth provider through its complete authentication flow.
+   * Coordinates between TestExecutor, VisionAnalyst, Diagnostic, and Fix agents.
+   * @param {string} providerName - Name of the OAuth provider to test (e.g., 'github', 'google')
+   * @returns {Promise<Object>} Test result containing status, provider name, and execution history
+   * @throws {Error} If provider not found in config or max retries exceeded
+   */
   async testProvider(providerName) {
     this.logger.info(`\n${'='.repeat(60)}\n🖥️  Testing OAuth Provider: ${providerName}\n${'='.repeat(60)}`);
 
@@ -97,7 +117,7 @@ class OAuthOrchestrator {
           const diagnosticResult = await diagnostic.diagnoseRootCause({
             screenshot: capturedState.screenshot,
             errorAnalysis: analysis,
-            networkLogs: [],
+            networkLogs: await testExecutor.getNetworkLogs(),
             pageUrl: capturedState.metadata.url
           });
 
@@ -186,11 +206,21 @@ class OAuthOrchestrator {
     return value;
   }
 
+  /**
+   * Main execution method that orchestrates the complete OAuth testing workflow.
+   * Validates environment, loads configuration, executes tests, and generates summary.
+   * @throws {Error} If required environment variables are missing or tests fail
+   */
   async run() {
     console.log(`
 🖥️  Gemini OAuth Automation System
 ${'='.repeat(60)}
 `);
+
+    // Validate required environment variables
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY environment variable is required. Please set it in your .env file.');
+    }
 
     await this.loadConfig();
     await this.setupOutputDirectory();
