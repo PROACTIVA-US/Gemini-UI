@@ -64,6 +64,11 @@ class OAuthOrchestrator {
         return currentUrl.includes('veria.cc') || currentUrl.includes(providerName);
 
       case 'email_login':
+        if (currentUrl.includes('verify-email')) {
+          logger.error('Email verification required - cannot proceed without email access');
+          logger.error('Email authentication requires clicking verification link in email');
+          throw new Error('Email verification blocker: Cannot test email auth without email access');
+        }
         // Should still be on veria.cc but not on verify-email page yet
         return currentUrl.includes('veria.cc') && !currentUrl.includes('verify-email');
 
