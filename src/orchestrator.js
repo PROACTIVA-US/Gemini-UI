@@ -177,6 +177,12 @@ class OAuthOrchestrator {
         // Capture current state
         const capturedState = await testExecutor.captureState();
 
+        // Log current page state before action
+        this.logger.debug(`[${currentState}] Current page state:`);
+        this.logger.debug(`  URL: ${capturedState.metadata.url}`);
+        this.logger.debug(`  Title: ${capturedState.metadata.title}`);
+        this.logger.debug(`  Screenshot: ${capturedState.screenshot ? 'captured' : 'none'}`);
+
         // Resolve test credentials from provider config
         const testCredentials = {};
         if (providerConfig.testAccount) {
@@ -234,6 +240,14 @@ Do NOT proceed to next step until the current step completes.`;
           }
         );
 
+        // Log action being requested
+        if (action) {
+          this.logger.debug(`[${currentState}] Requesting action: ${action.name}`);
+          this.logger.debug(`  Args: ${JSON.stringify(action.args || {})}`);
+        } else {
+          this.logger.error(`[${currentState}] No action received from Computer Use API`);
+        }
+
         if (!action) {
           this.logger.error('No action received from Computer Use API');
           if (!stateMachine.retry()) {
@@ -286,6 +300,8 @@ Do NOT proceed to next step until the current step completes.`;
           );
 
           if (stateVerified) {
+            this.logger.success(`✓ ${currentState} → ${stateMachine.getNextState() || 'COMPLETE'}`);
+            this.logger.success(`  Actions performed: ${stateMachine.actionsInCurrentState}`);
             stateMachine.advance();
           } else {
             this.logger.warn(`State verification failed for ${currentState}`);
