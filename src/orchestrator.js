@@ -259,6 +259,11 @@ Do NOT proceed to next step until the current step completes.`;
         // Execute Computer Use action directly
         const result = await testExecutor.executeComputerUseAction(action);
 
+        // Preserve safety decision from action (required for API acknowledgement)
+        if (action._safetyDecision) {
+          result._safetyDecision = action._safetyDecision;
+        }
+
         // Capture page state after action to get current URL
         const postActionState = await testExecutor.captureState();
 

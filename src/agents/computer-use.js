@@ -78,6 +78,13 @@ class ComputerUseAgent {
 
       const action = functionCall.functionCall;
 
+      // Extract safety decision if present (required for function response acknowledgement)
+      const safetyDecision = response.candidates[0].safetyDecision || null;
+      if (safetyDecision) {
+        action._safetyDecision = safetyDecision;
+        this.logger.debug('Safety decision present in response:', safetyDecision);
+      }
+
       // Add to conversation history
       this.conversationHistory.push({
         role: 'user',
@@ -107,17 +114,83 @@ class ComputerUseAgent {
   /**
    * Report action result back to Gemini
    * @param {object} result - Result of executed action
+   * @param {string} currentUrl - Current page URL after action execution
    */
-  async reportActionResult(result) {
+  async reportActionResult(result, currentUrl) {
+    // Computer Use API requires URL in function response
+    const response = {
+      ...result,
+      url: currentUrl || result.url || ''
+    };
+
+    // Build function response part
+    const functionResponsePart = {
+      functionResponse: {
+        name: result.actionName,
+        response: response
+      }
+    };
+
+    // Acknowledge safety decision if it was present in the original function call
+    if (result._safetyDecision) {
+      functionResponsePart.functionResponse.safetyDecision = result._safetyDecision;
+      this.logger.debug('Acknowledging safety decision in function response');
+    }
+
     this.conversationHistory.push({
       role: 'function',
-      parts: [{
-        functionResponse: {
-          name: result.actionName,
-          response: result
-        }
-      }]
+      parts: [functionResponsePart]
     });
+  }
+
+  /**
+   * Execute a high-level task using Computer Use API
+   * @param {object} options - Task options
+   * @param {string} options.instruction - What to do
+   * @param {string} options.screenshot - Base64 screenshot
+   * @param {number} options.timeout - Max time in ms
+   * @returns {Promise<object>} Task result
+   */
+  async executeTask(options) {
+    const { instruction, screenshot, timeout = 30000 } = options;
+
+    this.logger.info(`Executing task: ${instruction}`);
+
+    const startTime = Date.now();
+    const maxAttempts = 5;
+    let attempt = 0;
+
+    while (attempt < maxAttempts && (Date.now() - startTime) < timeout) {
+      attempt++;
+
+      try {
+        // Get next action from Gemini
+        const action = await this.getNextAction(screenshot, instruction, {
+          attempt,
+          maxAttempts
+        });
+
+        if (!action) {
+          this.logger.warn('No action returned from Computer Use API');
+          return { success: false, error: 'No action returned' };
+        }
+
+        this.logger.success(`Task action: ${action.name}`);
+        return { success: true, action };
+
+      } catch (error) {
+        this.logger.error(`Task execution failed: ${error.message}`);
+
+        if (attempt >= maxAttempts) {
+          return { success: false, error: error.message };
+        }
+
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    return { success: false, error: 'Timeout or max attempts reached' };
   }
 
   /**
