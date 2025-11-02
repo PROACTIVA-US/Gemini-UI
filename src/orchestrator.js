@@ -182,6 +182,13 @@ Do NOT proceed to next step until the current step completes.`;
         if (result.success) {
           this.logger.success(`Action ${action.name} executed successfully`);
 
+          // Increment action counter and check limit
+          stateMachine.actionsInCurrentState++;
+
+          if (stateMachine.actionsInCurrentState >= stateMachine.maxActionsPerState) {
+            throw new Error(`Exceeded max actions (${stateMachine.maxActionsPerState}) for state: ${currentState}`);
+          }
+
           // Wait for page to settle after action (especially for redirects)
           await new Promise(resolve => setTimeout(resolve, 2000));
 
