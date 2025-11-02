@@ -258,7 +258,14 @@ Do NOT proceed to next step until the current step completes.`;
           }
 
           // Wait for page to settle after action (especially for redirects)
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 5000));  // Changed from 2000 to 5000
+
+          // Add conditional wait after the base wait
+          if (currentState === 'provider_auth' || currentState === 'callback') {
+            // OAuth redirects need more time
+            this.logger.debug(`Waiting extra time for ${currentState} redirect...`);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
 
           // Verify state transition based on URL
           const afterActionState = await testExecutor.captureState();
