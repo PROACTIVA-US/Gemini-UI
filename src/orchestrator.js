@@ -49,6 +49,74 @@ class OAuthOrchestrator {
   }
 
   /**
+   * Verifies that the current URL matches expectations for the given state.
+   * @param {string} currentState - The current state in the state machine
+   * @param {string} currentUrl - The current page URL
+   * @param {string} providerName - The OAuth provider name
+   * @returns {boolean} True if URL matches state expectations, false otherwise
+   */
+  verifyStateTransition(currentState, currentUrl, providerName) {
+    const logger = this.logger;
+
+    switch(currentState) {
+      case 'landing':
+        // Should be on signin page or have clicked provider button
+        return currentUrl.includes('veria.cc') || currentUrl.includes(providerName);
+
+      case 'email_login':
+        // Should still be on veria.cc but not on verify-email page yet
+        return currentUrl.includes('veria.cc') && !currentUrl.includes('verify-email');
+
+      case 'provider_auth':
+        // Should be on provider domain (google.com, github.com) OR back on veria.cc
+        const onProvider = currentUrl.includes('google.com') ||
+                          currentUrl.includes('github.com') ||
+                          currentUrl.includes('accounts.google') ||
+                          currentUrl.includes('github.com/login');
+        const backOnVeria = currentUrl.includes('veria.cc');
+        return onProvider || backOnVeria;
+
+      case 'callback':
+        // MUST be back on veria.cc domain, NOT on signin page
+        const onVeriaNotSignin = currentUrl.includes('veria.cc') &&
+                                 !currentUrl.includes('/signin') &&
+                                 !currentUrl.includes('verify-email');
+        if (!onVeriaNotSignin) {
+          logger.warn(`Callback failed - URL: ${currentUrl}`);
+          logger.warn(`Expected veria.cc (not /signin or verify-email)`);
+        }
+        return onVeriaNotSignin;
+
+      case 'dashboard':
+        // MUST be on veria.cc AND have dashboard-like URL
+        const dashboardUrls = ['/dashboard', '/api', '/keys', '/settings', '/profile'];
+        const hasDashboardUrl = dashboardUrls.some(path => currentUrl.includes(path));
+        const notOnSignin = !currentUrl.includes('/signin');
+        const notOnVerify = !currentUrl.includes('verify-email');
+
+        const onDashboard = currentUrl.includes('veria.cc') &&
+                           hasDashboardUrl &&
+                           notOnSignin &&
+                           notOnVerify;
+
+        if (!onDashboard) {
+          logger.warn(`Dashboard verification failed - URL: ${currentUrl}`);
+          logger.warn(`Expected: veria.cc with /dashboard or /api or /keys`);
+        }
+        return onDashboard;
+
+      case 'signout':
+        // Should be back on signin/landing page
+        return currentUrl.includes('veria.cc') &&
+               (currentUrl.includes('/signin') || currentUrl === 'https://www.veria.cc/');
+
+      default:
+        logger.warn(`Unknown state for verification: ${currentState}`);
+        return true; // Don't block unknown states
+    }
+  }
+
+  /**
    * Tests a single OAuth provider through its complete authentication flow.
    * Coordinates between TestExecutor, ComputerUse, Diagnostic, and Fix agents.
    * @param {string} providerName - Name of the OAuth provider to test (e.g., 'github', 'google')
@@ -198,35 +266,24 @@ Do NOT proceed to next step until the current step completes.`;
 
           this.logger.debug(`After ${currentState}, URL is: ${currentUrl}`);
 
-          // State-specific verification
-          let stateVerified = false;
-          if (currentState === 'provider_auth') {
-            // After entering credentials on provider, we should be back on veria.cc or on consent page
-            // Just accept any URL change as progress
-            stateVerified = true;
-          } else if (currentState === 'callback') {
-            // Should be back on veria.cc domain
-            stateVerified = currentUrl.includes('veria.cc');
-            if (!stateVerified) {
-              this.logger.warn(`Still not on veria.cc after callback. URL: ${currentUrl}`);
-            }
-          } else if (currentState === 'dashboard') {
-            // Should be on dashboard page, not signin page
-            const onDashboard = currentUrl.includes('veria.cc') && !currentUrl.includes('/signin');
-            stateVerified = onDashboard;
-            if (!stateVerified) {
-              this.logger.warn(`Not on dashboard. Still on: ${currentUrl}`);
-            }
-          } else {
-            stateVerified = true; // Other states don't need URL verification
-          }
+          // Verify state transition using helper method
+          const stateVerified = this.verifyStateTransition(
+            currentState,
+            currentUrl,
+            providerName
+          );
 
           if (stateVerified) {
             stateMachine.advance();
           } else {
-            this.logger.warn(`State verification failed for ${currentState}, retrying...`);
+            this.logger.warn(`State verification failed for ${currentState}`);
+            this.logger.warn(`Current URL: ${currentUrl}`);
+
+            // Take screenshot of failed state
+            await testExecutor.captureState();
+
             if (!stateMachine.retry()) {
-              throw new Error(`Failed to verify ${currentState} state after max retries`);
+              throw new Error(`Failed to verify ${currentState} state after max retries. Stuck at URL: ${currentUrl}`);
             }
           }
         } else {
