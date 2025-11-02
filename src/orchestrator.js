@@ -104,14 +104,60 @@ class OAuthOrchestrator {
         // Capture current state
         const capturedState = await testExecutor.captureState();
 
+        // Resolve test credentials from provider config
+        const testCredentials = {};
+        if (providerConfig.testAccount) {
+          for (const [key, value] of Object.entries(providerConfig.testAccount)) {
+            testCredentials[key] = this.resolveEnvVar(value, providerConfig);
+          }
+        }
+
+        // Build detailed goal based on current state
+        let goal = `You are testing ${providerName} sign-in flow on veria.cc. `;
+
+        if (currentState === 'landing') {
+          if (providerName === 'email') {
+            goal += `Look for the email/password login form on the page and prepare to enter credentials.`;
+          } else {
+            goal += `Look for the "Sign in with ${providerName}" button and click it.`;
+          }
+        } else if (currentState === 'email_login') {
+          goal += `You are on the veria.cc login form. Enter email and password credentials: ${JSON.stringify(testCredentials)} into the form fields and click the submit/sign-in button to log in.`;
+        } else if (currentState === 'provider_auth') {
+          // Multi-step instructions for OAuth providers
+          if (providerName === 'google') {
+            goal += `You are on Google's login page. Complete these steps in sequence:
+1. Enter email: ${JSON.stringify(testCredentials.email)} and click "Next" button
+2. Wait for password page to load
+3. Enter password: ${testCredentials.password} and click "Sign in" button
+4. If you see a consent/permissions screen, click "Allow" or "Continue"
+Do NOT proceed to next step until the current step completes.`;
+          } else if (providerName === 'github') {
+            goal += `You are on GitHub's login page. Complete these steps:
+1. If you see username field, enter: ${JSON.stringify(testCredentials.username)}
+2. Enter password: ${testCredentials.password}
+3. Click the green "Sign in" button to submit the form
+4. Wait for redirect back to veria.cc`;
+          } else {
+            goal += `Enter credentials: ${JSON.stringify(testCredentials)} and click the submit button to log in.`;
+          }
+        } else if (currentState === 'callback') {
+          goal += `The OAuth authentication is completing. Wait for automatic redirect back to veria.cc. If you see a consent/permission screen, click Allow/Continue. If already back on veria.cc, wait for dashboard to load.`;
+        } else if (currentState === 'dashboard') {
+          goal += `You should now be on the veria.cc dashboard (NOT the signin page). Verify you see user profile, API keys, dashboard navigation, or a sign-out button. The URL should be veria.cc/dashboard or similar, not /signin.`;
+        } else if (currentState === 'signout') {
+          goal += `You are logged in to veria.cc dashboard. Find the sign-out/logout button (usually in user menu or navigation) and click it to sign out. After signing out, you should be redirected back to the landing/signin page.`;
+        }
+
         // Get Computer Use action directly (no translation gap!)
         const action = await computerUse.getNextAction(
           capturedState.screenshot,
-          `Navigate through ${currentState} state for ${providerName} OAuth`,
+          goal,
           {
             state: currentState,
             url: capturedState.metadata.url,
-            provider: providerName
+            provider: providerName,
+            credentials: testCredentials
           }
         );
 
@@ -126,13 +172,56 @@ class OAuthOrchestrator {
         // Execute Computer Use action directly
         const result = await testExecutor.executeComputerUseAction(action);
 
-        // Report result back to Gemini
-        await computerUse.reportActionResult(result);
+        // Capture page state after action to get current URL
+        const postActionState = await testExecutor.captureState();
+
+        // Report result back to Gemini with current URL (required by Computer Use API)
+        await computerUse.reportActionResult(result, postActionState.metadata.url);
 
         // Check if action succeeded
         if (result.success) {
           this.logger.success(`Action ${action.name} executed successfully`);
-          stateMachine.advance();
+
+          // Wait for page to settle after action (especially for redirects)
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          // Verify state transition based on URL
+          const afterActionState = await testExecutor.captureState();
+          const currentUrl = afterActionState.metadata.url;
+
+          this.logger.debug(`After ${currentState}, URL is: ${currentUrl}`);
+
+          // State-specific verification
+          let stateVerified = false;
+          if (currentState === 'provider_auth') {
+            // After entering credentials on provider, we should be back on veria.cc or on consent page
+            // Just accept any URL change as progress
+            stateVerified = true;
+          } else if (currentState === 'callback') {
+            // Should be back on veria.cc domain
+            stateVerified = currentUrl.includes('veria.cc');
+            if (!stateVerified) {
+              this.logger.warn(`Still not on veria.cc after callback. URL: ${currentUrl}`);
+            }
+          } else if (currentState === 'dashboard') {
+            // Should be on dashboard page, not signin page
+            const onDashboard = currentUrl.includes('veria.cc') && !currentUrl.includes('/signin');
+            stateVerified = onDashboard;
+            if (!stateVerified) {
+              this.logger.warn(`Not on dashboard. Still on: ${currentUrl}`);
+            }
+          } else {
+            stateVerified = true; // Other states don't need URL verification
+          }
+
+          if (stateVerified) {
+            stateMachine.advance();
+          } else {
+            this.logger.warn(`State verification failed for ${currentState}, retrying...`);
+            if (!stateMachine.retry()) {
+              throw new Error(`Failed to verify ${currentState} state after max retries`);
+            }
+          }
         } else {
           this.logger.error(`Action ${action.name} failed: ${result.error}`);
 
