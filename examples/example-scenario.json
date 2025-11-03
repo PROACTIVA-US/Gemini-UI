@@ -1,0 +1,82 @@
+{
+  "scenarios": [
+    {
+      "name": "example-contact-form",
+      "description": "Example: Test a contact form with validation",
+      "baseUrl": "https://www.selenium.dev/selenium/web/web-form.html",
+      "enabled": true,
+      "testData": {
+        "validInput": {
+          "text": "Test Input",
+          "password": "SecurePass123",
+          "textarea": "This is a test message for the contact form."
+        },
+        "invalidInput": {
+          "text": "",
+          "password": ""
+        }
+      },
+      "flow": [
+        {
+          "state": "landing",
+          "goal": "Verify the web form page loads and form elements are visible",
+          "validation": {
+            "urlContains": "web-form.html"
+          }
+        },
+        {
+          "state": "fill-valid-form",
+          "goal": "Fill out the form with valid test data: text input, password, and textarea",
+          "inputs": "testData.validInput",
+          "validation": {
+            "noErrors": true
+          }
+        },
+        {
+          "state": "submit-form",
+          "goal": "Click the Submit button to submit the form",
+          "validation": {
+            "urlChanged": true
+          }
+        },
+        {
+          "state": "verify-success",
+          "goal": "Verify the form was submitted successfully and a success message is displayed",
+          "validation": {
+            "hasSuccess": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "example-simple-navigation",
+      "description": "Example: Simple navigation test",
+      "baseUrl": "https://playwright.dev",
+      "enabled": true,
+      "flow": [
+        {
+          "state": "landing",
+          "goal": "Navigate to Playwright homepage and verify it loads"
+        },
+        {
+          "state": "click-docs",
+          "goal": "Click the 'Docs' link in the navigation menu",
+          "validation": {
+            "urlContains": "/docs"
+          }
+        },
+        {
+          "state": "click-api",
+          "goal": "Click the 'API' link in the navigation menu",
+          "validation": {
+            "urlContains": "/docs/api"
+          }
+        },
+        {
+          "state": "verify-content",
+          "goal": "Verify the API documentation page shows API reference content"
+        }
+      ]
+    }
+  ]
+}
