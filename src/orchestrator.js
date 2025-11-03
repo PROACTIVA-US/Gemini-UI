@@ -53,9 +53,10 @@ class OAuthOrchestrator {
    * @param {string} currentState - The current state in the state machine
    * @param {string} currentUrl - The current page URL
    * @param {string} providerName - The OAuth provider name
+   * @param {object} stateMachine - The state machine instance for action counting
    * @returns {boolean} True if URL matches state expectations, false otherwise
    */
-  verifyStateTransition(currentState, currentUrl, providerName) {
+  verifyStateTransition(currentState, currentUrl, providerName, stateMachine) {
     const logger = this.logger;
 
     switch(currentState) {
@@ -73,13 +74,29 @@ class OAuthOrchestrator {
         return currentUrl.includes('veria.cc') && !currentUrl.includes('verify-email');
 
       case 'provider_auth':
-        // Should be on provider domain (google.com, github.com) OR back on veria.cc
-        const onProvider = currentUrl.includes('google.com') ||
-                          currentUrl.includes('github.com') ||
-                          currentUrl.includes('accounts.google') ||
-                          currentUrl.includes('github.com/login');
-        const backOnVeria = currentUrl.includes('veria.cc');
-        return onProvider || backOnVeria;
+        // OAuth login requires multiple actions: username, password, submit (minimum 3)
+        const minOAuthActions = 3;
+
+        if (stateMachine.actionsInCurrentState < minOAuthActions) {
+          logger.debug(`Provider auth needs ${minOAuthActions} actions (username, password, submit), currently: ${stateMachine.actionsInCurrentState}`);
+          return false; // Don't advance yet - let API complete the form
+        }
+
+        // After 3+ actions, MUST be redirected back to veria.cc (OAuth completed)
+        // Form submission happens on action 3, redirect takes a few more seconds
+        const oauthComplete = currentUrl.includes('veria.cc');
+
+        if (!oauthComplete) {
+          // Still on provider domain - wait for redirect (up to max actions limit)
+          if (stateMachine.actionsInCurrentState >= stateMachine.maxActionsPerState - 2) {
+            logger.warn(`Provider auth: ${stateMachine.actionsInCurrentState} actions but still at ${currentUrl}`);
+            logger.warn(`OAuth may have failed - not redirecting to veria.cc`);
+          }
+          return false; // Keep waiting for redirect
+        }
+
+        logger.info(`✓ Provider auth complete - ${stateMachine.actionsInCurrentState} actions, redirected to veria.cc`);
+        return true;
 
       case 'callback':
         // MUST be back on veria.cc domain, NOT on signin page
@@ -301,7 +318,8 @@ Do NOT proceed to next step until the current step completes.`;
           const stateVerified = this.verifyStateTransition(
             currentState,
             currentUrl,
-            providerName
+            providerName,
+            stateMachine
           );
 
           if (stateVerified) {
