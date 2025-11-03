@@ -6,6 +6,8 @@ class StateMachine {
     this.history = [];
     this.maxRetries = 3;
     this.retryCount = 0;
+    this.actionsInCurrentState = 0;  // NEW: Track actions per state
+    this.maxActionsPerState = 10;    // NEW: Prevent infinite loops
   }
 
   getCurrentState() {
@@ -20,14 +22,16 @@ class StateMachine {
   }
 
   advance() {
-    if (this.currentIndex < this.states.length - 1) {
+    if (this.currentIndex < this.states.length) {
       this.history.push({
         state: this.getCurrentState(),
         timestamp: new Date().toISOString(),
-        success: true
+        success: true,
+        actionsPerformed: this.actionsInCurrentState  // NEW
       });
       this.currentIndex++;
       this.retryCount = 0;
+      this.actionsInCurrentState = 0;  // NEW: Reset counter
       return true;
     }
     return false;
@@ -54,12 +58,11 @@ class StateMachine {
 
   /**
    * Checks if the state machine has completed all states.
-   * Note: This checks if we're AT the last state, not if we've advanced PAST it.
-   * The machine is considered complete when currentIndex equals (states.length - 1).
-   * @returns {boolean} True if at the final state, false otherwise
+   * The machine is considered complete when we've advanced past the last state.
+   * @returns {boolean} True if all states have been executed, false otherwise
    */
   isComplete() {
-    return this.currentIndex === this.states.length - 1;
+    return this.currentIndex >= this.states.length;
   }
 
   reset() {

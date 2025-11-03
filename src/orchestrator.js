@@ -49,6 +49,120 @@ class OAuthOrchestrator {
   }
 
   /**
+   * Verifies that the current URL matches expectations for the given state.
+   * @param {string} currentState - The current state in the state machine
+   * @param {string} currentUrl - The current page URL
+   * @param {string} providerName - The OAuth provider name
+   * @param {object} stateMachine - The state machine instance for action counting
+   * @returns {boolean} True if URL matches state expectations, false otherwise
+   */
+  verifyStateTransition(currentState, currentUrl, providerName, stateMachine) {
+    const logger = this.logger;
+
+    switch(currentState) {
+      case 'landing':
+        // Should be on signin page or have clicked provider button
+        return currentUrl.includes('veria.cc') || currentUrl.includes(providerName);
+
+      case 'email_login':
+        if (currentUrl.includes('verify-email')) {
+          logger.error('Email verification required - cannot proceed without email access');
+          logger.error('Email authentication requires clicking verification link in email');
+          throw new Error('Email verification blocker: Cannot test email auth without email access');
+        }
+        // Should still be on veria.cc but not on verify-email page yet
+        return currentUrl.includes('veria.cc') && !currentUrl.includes('verify-email');
+
+      case 'provider_auth':
+        // OAuth login requires multiple actions: username, password, submit (minimum 3)
+        const minOAuthActions = 3;
+
+        if (stateMachine.actionsInCurrentState < minOAuthActions) {
+          logger.debug(`Provider auth needs ${minOAuthActions} actions (username, password, submit), currently: ${stateMachine.actionsInCurrentState}`);
+          return false; // Don't advance yet - let API complete the form
+        }
+
+        // After 3+ actions, MUST be redirected back to veria.cc (OAuth completed)
+        // Form submission happens on action 3, redirect takes a few more seconds
+        const oauthComplete = currentUrl.includes('veria.cc');
+
+        if (!oauthComplete) {
+          // Still on provider domain - wait for redirect (up to max actions limit)
+          if (stateMachine.actionsInCurrentState >= stateMachine.maxActionsPerState - 2) {
+            logger.warn(`Provider auth: ${stateMachine.actionsInCurrentState} actions but still at ${currentUrl}`);
+            logger.warn(`OAuth may have failed - not redirecting to veria.cc`);
+          }
+          return false; // Keep waiting for redirect
+        }
+
+        logger.info(`✓ Provider auth complete - ${stateMachine.actionsInCurrentState} actions, redirected to veria.cc`);
+        return true;
+
+      case 'callback':
+        // Check if we're back on veria.cc
+        if (!currentUrl.includes('veria.cc')) {
+          return false; // Still on OAuth provider
+        }
+
+        // Check for OAuth-specific errors (these indicate server-side issues that need fixing)
+        const oauthErrors = [
+          'OAuthAccountNotLinked',
+          'OAuthCallback',
+          'OAuthSignin'
+        ];
+
+        const hasOAuthError = oauthErrors.some(err => currentUrl.includes(`error=${err}`));
+
+        if (hasOAuthError) {
+          // OAuth error detected - this requires diagnostic and fix
+          const errorType = oauthErrors.find(e => currentUrl.includes(e));
+          logger.warn(`OAuth error detected: ${errorType}`);
+          logger.warn(`URL: ${currentUrl}`);
+          // Return false to trigger error handling and fix cycle
+          return false;
+        }
+
+        // Normal success: on veria.cc, not on signin, not on verify-email
+        const callbackSuccess = !currentUrl.includes('/signin') &&
+                                !currentUrl.includes('verify-email');
+
+        if (!callbackSuccess) {
+          logger.warn(`Callback failed - URL: ${currentUrl}`);
+          logger.warn(`Expected veria.cc (not /signin or verify-email)`);
+        }
+
+        return callbackSuccess;
+
+      case 'dashboard':
+        // MUST be on veria.cc AND have dashboard-like URL
+        const dashboardUrls = ['/dashboard', '/api', '/keys', '/settings', '/profile'];
+        const hasDashboardUrl = dashboardUrls.some(path => currentUrl.includes(path));
+        const notOnSignin = !currentUrl.includes('/signin');
+        const notOnVerify = !currentUrl.includes('verify-email');
+
+        const onDashboard = currentUrl.includes('veria.cc') &&
+                           hasDashboardUrl &&
+                           notOnSignin &&
+                           notOnVerify;
+
+        if (!onDashboard) {
+          logger.warn(`Dashboard verification failed - URL: ${currentUrl}`);
+          logger.warn(`Expected: veria.cc with /dashboard or /api or /keys`);
+        }
+        return onDashboard;
+
+      case 'signout':
+        // Should be back on signin/landing page
+        return currentUrl.includes('veria.cc') &&
+               (currentUrl.includes('/signin') || currentUrl === 'https://www.veria.cc/');
+
+      default:
+        logger.warn(`Unknown state for verification: ${currentState}`);
+        return true; // Don't block unknown states
+    }
+  }
+
+  /**
    * Tests a single OAuth provider through its complete authentication flow.
    * Coordinates between TestExecutor, ComputerUse, Diagnostic, and Fix agents.
    * @param {string} providerName - Name of the OAuth provider to test (e.g., 'github', 'google')
@@ -86,6 +200,10 @@ class OAuthOrchestrator {
 
     // Initialize state machine
     const stateMachine = new StateMachine(providerName, providerConfig.flow);
+
+    // Track flow-level retries to prevent infinite loops
+    let flowRetryCount = 0;
+    const maxFlowRetries = 3;
 
     try {
       await testExecutor.initialize();
@@ -182,7 +300,14 @@ class OAuthOrchestrator {
       await testExecutor.cleanup();
 
       this.logger.success(`✅ ${providerName} OAuth test PASSED`);
-      return { status: 'passed', provider: providerName, history: stateMachine.getHistory() };
+      this.logger.success(`✅ Successfully reached dashboard and completed full e2e flow`);
+
+      return {
+        status: 'passed',
+        provider: providerName,
+        flow: stateMachine.history,
+        flowRetries: flowRetryCount
+      };
 
     } catch (error) {
       this.logger.error(`❌ ${providerName} OAuth test FAILED:`, error.message);

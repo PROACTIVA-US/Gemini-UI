@@ -1,0 +1,258 @@
+{
+  "scenarios": [
+    {
+      "name": "form-validation",
+      "description": "Test form validation with invalid inputs",
+      "baseUrl": "https://example.com/contact",
+      "enabled": true,
+      "flow": [
+        {
+          "state": "landing",
+          "goal": "Navigate to the contact form page and verify the form is visible",
+          "validation": {
+            "urlContains": "/contact",
+            "hasForm": true
+          }
+        },
+        {
+          "state": "test-empty-submit",
+          "goal": "Click the submit button without filling any fields to trigger validation errors",
+          "validation": {
+            "hasErrors": true,
+            "errorMessages": ["required", "invalid"]
+          }
+        },
+        {
+          "state": "test-invalid-email",
+          "goal": "Enter invalid email 'notanemail' and submit to test email validation",
+          "inputs": {
+            "email": "notanemail"
+          },
+          "validation": {
+            "hasErrors": true,
+            "errorContains": "email"
+          }
+        },
+        {
+          "state": "test-valid-submit",
+          "goal": "Fill all fields correctly and submit the form successfully",
+          "inputs": {
+            "name": "Test User",
+            "email": "test@example.com",
+            "message": "This is a test message"
+          },
+          "validation": {
+            "hasSuccess": true,
+            "urlChanged": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "navigation-test",
+      "description": "Test all navigation links work correctly",
+      "baseUrl": "https://example.com",
+      "enabled": true,
+      "flow": [
+        {
+          "state": "landing",
+          "goal": "Verify homepage loads and navigation menu is visible"
+        },
+        {
+          "state": "test-nav-links",
+          "goal": "Click each navigation link (About, Products, Contact, Blog) and verify each page loads without errors",
+          "actions": ["click-all-nav-links"],
+          "validation": {
+            "noErrors": true,
+            "validUrls": true
+          }
+        },
+        {
+          "state": "test-footer-links",
+          "goal": "Scroll to footer and test all footer links",
+          "actions": ["scroll-to-bottom", "click-all-footer-links"],
+          "validation": {
+            "noErrors": true,
+            "validUrls": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "search-functionality",
+      "description": "Test search feature with various queries",
+      "baseUrl": "https://example.com",
+      "enabled": true,
+      "flow": [
+        {
+          "state": "landing",
+          "goal": "Navigate to homepage and locate the search input field"
+        },
+        {
+          "state": "search-empty",
+          "goal": "Submit empty search and verify appropriate handling (error or no results message)",
+          "validation": {
+            "hasMessage": true
+          }
+        },
+        {
+          "state": "search-valid",
+          "goal": "Search for 'product' and verify results are displayed",
+          "inputs": {
+            "search": "product"
+          },
+          "validation": {
+            "hasResults": true,
+            "resultsCount": "> 0"
+          }
+        },
+        {
+          "state": "search-no-results",
+          "goal": "Search for 'xyznonexistent123' and verify 'no results' message appears",
+          "inputs": {
+            "search": "xyznonexistent123"
+          },
+          "validation": {
+            "noResults": true,
+            "hasMessage": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "responsive-design",
+      "description": "Test responsive design across different viewport sizes",
+      "baseUrl": "https://example.com",
+      "enabled": true,
+      "viewports": [
+        { "width": 1920, "height": 1080, "name": "desktop" },
+        { "width": 768, "height": 1024, "name": "tablet" },
+        { "width": 375, "height": 667, "name": "mobile" }
+      ],
+      "flow": [
+        {
+          "state": "test-viewport",
+          "goal": "For each viewport size, verify layout is correct, navigation works, and no horizontal scrollbars appear",
+          "validation": {
+            "noHorizontalScroll": true,
+            "mobileMenuVisible": "if-mobile",
+            "layoutCorrect": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "checkout-flow",
+      "description": "E2E e-commerce checkout test",
+      "baseUrl": "https://example.com/shop",
+      "enabled": true,
+      "testData": {
+        "creditCard": {
+          "number": "4242424242424242",
+          "expiry": "12/25",
+          "cvv": "123",
+          "name": "Test User"
+        },
+        "shippingAddress": {
+          "name": "John Doe",
+          "address": "123 Test St",
+          "city": "Test City",
+          "zip": "12345"
+        }
+      },
+      "flow": [
+        {
+          "state": "product-page",
+          "goal": "Navigate to a product page and verify product details are visible"
+        },
+        {
+          "state": "add-to-cart",
+          "goal": "Click 'Add to Cart' button and verify cart count increases",
+          "validation": {
+            "cartCount": "> 0"
+          }
+        },
+        {
+          "state": "view-cart",
+          "goal": "Navigate to cart page and verify product is in cart",
+          "validation": {
+            "hasProducts": true
+          }
+        },
+        {
+          "state": "checkout",
+          "goal": "Click checkout button and fill shipping information",
+          "inputs": "testData.shippingAddress",
+          "validation": {
+            "onCheckoutPage": true
+          }
+        },
+        {
+          "state": "payment",
+          "goal": "Fill payment information (test card) and submit order",
+          "inputs": "testData.creditCard",
+          "validation": {
+            "orderPlaced": true,
+            "hasConfirmation": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "accessibility-test",
+      "description": "Basic accessibility checks",
+      "baseUrl": "https://example.com",
+      "enabled": true,
+      "flow": [
+        {
+          "state": "keyboard-navigation",
+          "goal": "Navigate the page using only Tab key and verify all interactive elements are reachable",
+          "actions": ["tab-navigation"],
+          "validation": {
+            "allElementsReachable": true
+          }
+        },
+        {
+          "state": "color-contrast",
+          "goal": "Take screenshots and analyze for color contrast issues",
+          "validation": {
+            "contrastRatio": ">= 4.5"
+          }
+        },
+        {
+          "state": "alt-text",
+          "goal": "Verify all images have alt text",
+          "validation": {
+            "allImagesHaveAlt": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "performance-test",
+      "description": "Check page load performance",
+      "baseUrl": "https://example.com",
+      "enabled": true,
+      "flow": [
+        {
+          "state": "measure-load-time",
+          "goal": "Navigate to page and measure load time, resource count, and total size",
+          "validation": {
+            "loadTime": "< 3000ms",
+            "resourceCount": "< 100",
+            "totalSize": "< 5MB"
+          }
+        },
+        {
+          "state": "lighthouse-score",
+          "goal": "Run Lighthouse audit and verify scores are acceptable",
+          "validation": {
+            "performance": ">= 70",
+            "accessibility": ">= 85",
+            "bestPractices": ">= 80"
+          }
+        }
+      ]
+    }
+  ]
+}

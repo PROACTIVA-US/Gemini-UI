@@ -58,12 +58,27 @@ node src/orchestrator.js --provider github --auto-fix
 Each test run creates a timestamped directory in `tmp/`:
 ```
 tmp/oauth-test-2025-10-30-140523/
-├── screenshot-001.png
+├── screenshot-001.png        # Screenshots at each step
 ├── screenshot-002.png
 ├── screenshot-003.png
-├── results.json
-└── execution.log
+├── trace.zip                 # Full trace recording (NEW!)
+├── video.webm                # Video recording of test
+├── results.json              # Test results summary
+└── execution.log             # Detailed execution log
 ```
+
+### 🆕 Full Trace Recording & CDP
+
+Every test run now includes:
+- **Chrome DevTools Protocol (CDP)** on port 9222
+- **Complete Playwright trace** with screenshots, network logs, console output, and DOM snapshots
+
+View traces:
+```bash
+npx playwright show-trace tmp/oauth-test-*/trace.zip
+```
+
+See [`docs/CDP_AND_TRACING.md`](docs/CDP_AND_TRACING.md) for complete guide.
 
 ## Troubleshooting
 

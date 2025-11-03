@@ -2,27 +2,40 @@
   "baseUrl": "https://veria.cc",
   "providers": [
     {
+      "name": "email",
+      "enabled": false,
+      "testAccount": {
+        "email": "process.env.TEST_EMAIL_USER",
+        "password": "process.env.TEST_EMAIL_PASS"
+      },
+      "flow": ["landing", "email_login", "dashboard", "signout"]
+    },
+    {
       "name": "github",
       "enabled": true,
       "testAccount": {
-        "username": "process.env.GITHUB_TEST_USER",
-        "password": "process.env.GITHUB_TEST_PASS"
+        "username": "process.env.TEST_GITHUB_USER",
+        "password": "process.env.TEST_GITHUB_PASS"
       },
-      "flow": ["landing", "provider_auth", "callback", "dashboard"]
+      "flow": ["landing", "provider_auth", "callback", "dashboard", "signout"]
     },
     {
       "name": "google",
       "enabled": true,
       "testAccount": {
-        "email": "process.env.GOOGLE_TEST_EMAIL",
-        "password": "process.env.GOOGLE_TEST_PASS"
+        "email": "process.env.TEST_GOOGLE_EMAIL",
+        "password": "process.env.TEST_GOOGLE_PASS"
       },
-      "flow": ["landing", "provider_auth", "callback", "dashboard"]
+      "flow": ["landing", "provider_auth", "callback", "dashboard", "signout"]
     }
   ],
   "states": {
     "landing": {
       "expect": "Sign in buttons visible",
+      "timeout": 10000
+    },
+    "email_login": {
+      "expect": "Email login form visible, enter credentials",
       "timeout": 10000
     },
     "provider_auth": {
@@ -35,6 +48,10 @@
     },
     "dashboard": {
       "expect": "User logged in, API keys or dashboard visible",
+      "timeout": 10000
+    },
+    "signout": {
+      "expect": "User signed out, back to landing page",
       "timeout": 10000
     }
   },

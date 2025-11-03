@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 
 class TestExecutorAgent {
@@ -13,20 +14,57 @@ class TestExecutorAgent {
     this.networkRequests = [];
   }
 
-  async initialize() {
+  async initialize(options = {}) {
     this.logger.info('Initializing browser...');
+
+    // Use persistent context for session storage (cookies, localStorage, etc.)
+    const userDataDir = options.userDataDir || path.join(__dirname, '..', '..', 'tmp', 'browser-sessions');
+
+    // Ensure user data directory exists
+    if (!fsSync.existsSync(userDataDir)) {
+      fsSync.mkdirSync(userDataDir, { recursive: true });
+    }
+
+    // Enable CDP (Chrome DevTools Protocol) on port 9222 for full tracing
+    const cdpPort = options.cdpPort || 9222;
+
     this.browser = await chromium.launch({
       headless: false,
-      args: ['--start-maximized']
+      args: [
+        '--start-maximized',
+        `--remote-debugging-port=${cdpPort}` // Enable CDP for DevTools access
+      ]
     });
+
+    this.cdpPort = cdpPort;
+    this.logger.debug(`CDP enabled on port ${cdpPort}`);
+
     this.context = await this.browser.newContext({
       viewport: { width: 1920, height: 1080 },
+      storageState: options.storageState, // Load previous session if exists
       recordVideo: {
         dir: this.outputDir,
         size: { width: 1920, height: 1080 }
       }
     });
+
+    // Start Playwright tracing for full trace recording
+    // Includes screenshots, snapshots, network activity, console logs
+    this.traceEnabled = options.enableTrace !== false; // Default: true
+    if (this.traceEnabled) {
+      const traceOptions = {
+        screenshots: true,
+        snapshots: true,
+        sources: true,
+        // Attach full trace data including network and console
+      };
+      await this.context.tracing.start(traceOptions);
+      this.logger.debug('Playwright tracing started');
+    }
+
     this.page = await this.context.newPage();
+    this.userDataDir = userDataDir;
+    this.tracePath = path.join(this.outputDir, 'trace.zip');
 
     // Enable console log capture
     this.page.on('console', msg => {
@@ -45,10 +83,26 @@ class TestExecutorAgent {
     this.logger.success('Browser initialized');
   }
 
-  async navigate(url) {
+  async navigate(url, options = {}) {
     this.logger.info(`Navigating to ${url}`);
-    await this.page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    this.logger.success(`Navigated to ${url}`);
+
+    const defaultOptions = {
+      waitUntil: 'domcontentloaded', // Changed from networkidle for better reliability
+      timeout: 60000 // Increased timeout to 60 seconds
+    };
+
+    try {
+      await this.page.goto(url, { ...defaultOptions, ...options });
+      this.logger.success(`Navigated to ${url}`);
+    } catch (error) {
+      // If navigation times out, check if we're at least on the page
+      const currentUrl = this.page.url();
+      if (currentUrl.includes(new URL(url).hostname)) {
+        this.logger.warn(`Navigation timed out but reached ${currentUrl}`);
+      } else {
+        throw error;
+      }
+    }
   }
 
   async click(selector, options = {}) {
@@ -101,6 +155,27 @@ class TestExecutorAgent {
       screenshot: screenshotBase64,
       metadata: state
     };
+  }
+
+  /**
+   * Take a screenshot with a custom name
+   * @param {string} name - Name for the screenshot file
+   * @returns {Promise<string>} Base64 encoded screenshot
+   */
+  async takeScreenshot(name) {
+    const screenshotPath = path.join(
+      this.outputDir,
+      `${name}.png`
+    );
+
+    const screenshot = await this.page.screenshot({
+      path: screenshotPath,
+      fullPage: false
+    });
+
+    this.logger.debug(`Screenshot saved: ${screenshotPath}`);
+
+    return screenshot.toString('base64');
   }
 
   /**
@@ -242,6 +317,30 @@ class TestExecutorAgent {
 
   async cleanup() {
     this.logger.info('Cleaning up browser...');
+
+    // Stop and save trace before closing context
+    if (this.traceEnabled && this.context) {
+      try {
+        await this.context.tracing.stop({ path: this.tracePath });
+        this.logger.success(`Trace saved to: ${this.tracePath}`);
+        this.logger.info(`View trace: npx playwright show-trace ${this.tracePath}`);
+      } catch (error) {
+        this.logger.warn(`Failed to save trace: ${error.message}`);
+      }
+    }
+
+    // Save session state for future use
+    if (this.context && options.saveSession !== false) {
+      try {
+        const storageStatePath = path.join(this.userDataDir, 'session-state.json');
+        const storageState = await this.context.storageState();
+        await fs.writeFile(storageStatePath, JSON.stringify(storageState, null, 2));
+        this.logger.success(`Session saved to: ${storageStatePath}`);
+      } catch (error) {
+        this.logger.warn(`Failed to save session: ${error.message}`);
+      }
+    }
+
     if (this.context) {
       await this.context.close();
     }
