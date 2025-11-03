@@ -287,40 +287,74 @@ class ScenarioRunner {
 
     // Error detection
     if (validation.hasErrors !== undefined) {
-      const screenshot = await testExecutor.takeScreenshot(`validation-${Date.now()}`);
+      try {
+        const screenshot = await testExecutor.takeScreenshot(`validation-${Date.now()}`);
 
-      // Ask Gemini to detect errors on the page
-      const errorCheckGoal = "Look at this page and determine if there are any error messages visible. Respond with 'yes' if errors are present, 'no' if not.";
+        // Ask Gemini to detect errors on the page
+        const errorCheckGoal = "Look at this page and determine if there are any error messages visible. Respond with 'yes' if errors are present, 'no' if not.";
 
-      const action = await computerUse.getNextAction(
-        screenshot,
-        errorCheckGoal,
-        { validationType: 'errorDetection' }
-      );
+        const action = await computerUse.getNextAction(
+          screenshot,
+          errorCheckGoal,
+          { validationType: 'errorDetection' }
+        );
 
-      // Parse Gemini's response (simplified)
-      const hasErrors = true; // Would parse from Gemini's response
+        if (!action) {
+          throw new Error('No response from AI for error detection');
+        }
 
-      results.push({
-        type: 'hasErrors',
-        expected: validation.hasErrors,
-        actual: hasErrors,
-        passed: validation.hasErrors === hasErrors
-      });
+        // Parse Gemini's response - check if response contains affirmative indicators
+        const hasErrors = this.parseValidationResponse(action, ['yes', 'error', 'errors', 'found']);
+
+        results.push({
+          type: 'hasErrors',
+          expected: validation.hasErrors,
+          actual: hasErrors,
+          passed: validation.hasErrors === hasErrors
+        });
+      } catch (error) {
+        this.logger.warn('Error validation failed:', error.message);
+        results.push({
+          type: 'hasErrors',
+          passed: false,
+          error: error.message
+        });
+      }
     }
 
     // Success detection
     if (validation.hasSuccess !== undefined) {
-      const screenshot = await testExecutor.takeScreenshot(`validation-${Date.now()}`);
+      try {
+        const screenshot = await testExecutor.takeScreenshot(`validation-${Date.now()}`);
 
-      const successCheckGoal = "Look at this page and determine if there is a success message visible. Respond with 'yes' if a success message is present, 'no' if not.";
+        const successCheckGoal = "Look at this page and determine if there is a success message visible. Respond with 'yes' if a success message is present, 'no' if not.";
 
-      // Simplified validation
-      results.push({
-        type: 'hasSuccess',
-        expected: validation.hasSuccess,
-        passed: true // Would use Gemini to actually check
-      });
+        const action = await computerUse.getNextAction(
+          screenshot,
+          successCheckGoal,
+          { validationType: 'successDetection' }
+        );
+
+        if (!action) {
+          throw new Error('No response from AI for success detection');
+        }
+
+        const hasSuccess = this.parseValidationResponse(action, ['yes', 'success', 'successful', 'complete']);
+
+        results.push({
+          type: 'hasSuccess',
+          expected: validation.hasSuccess,
+          actual: hasSuccess,
+          passed: validation.hasSuccess === hasSuccess
+        });
+      } catch (error) {
+        this.logger.warn('Success validation failed:', error.message);
+        results.push({
+          type: 'hasSuccess',
+          passed: false,
+          error: error.message
+        });
+      }
     }
 
     // No errors validation
@@ -332,6 +366,20 @@ class ScenarioRunner {
     }
 
     return results;
+  }
+
+  /**
+   * Parse validation response from AI
+   * @param {Object} action - AI response action
+   * @param {Array<string>} indicators - Positive indicator keywords
+   * @returns {boolean} Whether validation passed
+   */
+  parseValidationResponse(action, indicators) {
+    // Check if action has a text response
+    const responseText = JSON.stringify(action).toLowerCase();
+
+    // Look for positive indicators
+    return indicators.some(indicator => responseText.includes(indicator));
   }
 
   /**

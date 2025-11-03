@@ -31,7 +31,7 @@ class EnhancedFixAgent {
     this.logger = logger;
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.model = this.genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp'
+      model: process.env.GEMINI_FIX_MODEL || 'gemini-2.0-flash-exp'
     });
     this.projectPath = projectPath;
     this.git = simpleGit(projectPath);
@@ -71,7 +71,15 @@ class EnhancedFixAgent {
         });
       }
 
-      const result = await this.model.generateContent(parts);
+      // Add timeout to AI API call (30 seconds)
+      const timeout = parseInt(process.env.GEMINI_API_TIMEOUT || '30000', 10);
+      const result = await Promise.race([
+        this.model.generateContent(parts),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`AI API request timed out after ${timeout}ms`)), timeout)
+        )
+      ]);
+
       const response = await result.response;
       const text = response.text();
 
@@ -103,20 +111,22 @@ class EnhancedFixAgent {
 
   /**
    * Categorize error to determine fix strategy
+   * Checks most specific patterns first to avoid overlaps
    */
   categorizeError(diagnostic, context) {
     const errorMessage = (diagnostic.message || '').toLowerCase();
     const pageUrl = context.pageUrl || '';
 
-    // Selector/Element errors
-    if (errorMessage.includes('selector') ||
+    // Check most specific patterns first to avoid overlaps
+
+    // Selector/Element errors (specific timeout patterns)
+    if ((errorMessage.includes('selector') && errorMessage.includes('timeout')) ||
         errorMessage.includes('element not found') ||
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('wait for element')) {
+        (errorMessage.includes('wait for element') && errorMessage.includes('selector'))) {
       return 'selector_error';
     }
 
-    // OAuth/Authentication errors
+    // OAuth/Authentication errors (check before other errors)
     if (errorMessage.includes('oauth') ||
         errorMessage.includes('authentication') ||
         errorMessage.includes('redirect_uri') ||
@@ -124,28 +134,28 @@ class EnhancedFixAgent {
       return 'auth_error';
     }
 
+    // Timing/Race condition errors (check before generic timeout)
+    if (errorMessage.includes('race condition') ||
+        errorMessage.includes('execution context') ||
+        (errorMessage.includes('timing') && !errorMessage.includes('selector')) ||
+        (errorMessage.includes('navigation') && errorMessage.includes('timeout'))) {
+      return 'timing_error';
+    }
+
     // Network/API errors
     if (errorMessage.includes('network') ||
         errorMessage.includes('fetch') ||
-        errorMessage.includes('api') ||
+        (errorMessage.includes('api') && !errorMessage.includes('api key')) ||
         errorMessage.includes('cors')) {
       return 'network_error';
     }
 
-    // Configuration errors
-    if (errorMessage.includes('env') ||
-        errorMessage.includes('config') ||
-        errorMessage.includes('undefined') ||
-        errorMessage.includes('not found')) {
+    // Configuration errors (check for specific env/config issues)
+    if ((errorMessage.includes('env') && errorMessage.includes('undefined')) ||
+        (errorMessage.includes('config') && errorMessage.includes('missing')) ||
+        errorMessage.includes('api key') ||
+        (errorMessage.includes('not found') && !errorMessage.includes('element'))) {
       return 'config_error';
-    }
-
-    // Timing/Race condition errors
-    if (errorMessage.includes('race condition') ||
-        errorMessage.includes('timing') ||
-        errorMessage.includes('navigation') ||
-        errorMessage.includes('execution context')) {
-      return 'timing_error';
     }
 
     // Form/Input errors
@@ -153,6 +163,17 @@ class EnhancedFixAgent {
         errorMessage.includes('input') ||
         errorMessage.includes('validation')) {
       return 'form_error';
+    }
+
+    // Generic selector errors (catch-all for remaining selector issues)
+    if (errorMessage.includes('selector') ||
+        errorMessage.includes('wait for element')) {
+      return 'selector_error';
+    }
+
+    // Generic timeout (after all specific cases)
+    if (errorMessage.includes('timeout')) {
+      return 'timing_error';
     }
 
     return 'unknown_error';
@@ -216,16 +237,39 @@ class EnhancedFixAgent {
 
   /**
    * Read file if it exists, return null otherwise
+   * @param {string} relativePath - Relative path to file
+   * @param {number} maxSize - Maximum file size in bytes (default 100KB)
+   * @returns {Promise<Object|null>} File object or null
    */
-  async readFileIfExists(relativePath) {
+  async readFileIfExists(relativePath, maxSize = 100000) {
     try {
       const fullPath = path.join(this.projectPath, relativePath);
+
+      // Check file size before reading
+      const stats = await fs.stat(fullPath);
+      if (stats.size > maxSize) {
+        this.logger.warn(`File ${relativePath} too large (${stats.size} bytes), truncating to first 100 lines`);
+
+        // Read file and truncate to first 100 lines
+        const content = await fs.readFile(fullPath, 'utf8');
+        const lines = content.split('\n').slice(0, 100);
+        const truncatedContent = lines.join('\n') + `\n\n... (file truncated, ${stats.size} total bytes)`;
+
+        return {
+          path: relativePath,
+          content: truncatedContent,
+          truncated: true
+        };
+      }
+
       const content = await fs.readFile(fullPath, 'utf8');
       return {
         path: relativePath,
-        content: content
+        content: content,
+        truncated: false
       };
     } catch (error) {
+      this.logger.debug(`Could not read file ${relativePath}:`, error.message);
       return null;
     }
   }
