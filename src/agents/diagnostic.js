@@ -138,11 +138,52 @@ Respond in JSON format:
 
       this.logger.success(`Root cause identified: ${diagnostic.rootCause} (confidence: ${diagnostic.confidence})`);
 
-      return diagnostic;
+      // Transform to format expected by FixAgent for backward compatibility
+      return {
+        type: 'oauth_error',
+        message: diagnostic.rootCause,
+        category: this._categorizeError(diagnostic.rootCause),
+        context: {
+          confidence: diagnostic.confidence,
+          evidence: diagnostic.evidence || [],
+          fixSuggestions: diagnostic.fixSuggestions || [],
+          reasoning: diagnostic.reasoning || '',
+          pageUrl: pageUrl,
+          errorAnalysis: errorAnalysis
+        }
+      };
     } catch (error) {
       this.logger.error('Diagnosis failed', error.message);
       throw error;
     }
+  }
+
+  /**
+   * Categorize error based on root cause description
+   * @private
+   * @param {string} rootCause - Root cause description
+   * @returns {string} Error category
+   */
+  _categorizeError(rootCause) {
+    const lower = rootCause.toLowerCase();
+
+    if (lower.includes('redirect_uri') || lower.includes('redirect uri') || lower.includes('callback')) {
+      return 'redirect_uri_mismatch';
+    }
+    if (lower.includes('client_id') || lower.includes('client id') || lower.includes('invalid_client')) {
+      return 'invalid_client';
+    }
+    if (lower.includes('access_denied') || lower.includes('denied')) {
+      return 'access_denied';
+    }
+    if (lower.includes('invalid_request') || lower.includes('missing parameter')) {
+      return 'invalid_request';
+    }
+    if (lower.includes('scope') || lower.includes('permission')) {
+      return 'insufficient_scope';
+    }
+
+    return 'unknown_error';
   }
 
   /**

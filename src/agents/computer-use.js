@@ -107,14 +107,21 @@ class ComputerUseAgent {
   /**
    * Report action result back to Gemini
    * @param {object} result - Result of executed action
+   * @param {string} currentUrl - Current page URL after action execution
    */
-  async reportActionResult(result) {
+  async reportActionResult(result, currentUrl) {
+    // Computer Use API requires URL in function response
+    const response = {
+      ...result,
+      url: currentUrl || result.url || ''
+    };
+
     this.conversationHistory.push({
       role: 'function',
       parts: [{
         functionResponse: {
           name: result.actionName,
-          response: result
+          response: response
         }
       }]
     });
