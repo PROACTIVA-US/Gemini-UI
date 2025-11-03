@@ -99,15 +99,39 @@ class OAuthOrchestrator {
         return true;
 
       case 'callback':
-        // MUST be back on veria.cc domain, NOT on signin page
-        const onVeriaNotSignin = currentUrl.includes('veria.cc') &&
-                                 !currentUrl.includes('/signin') &&
-                                 !currentUrl.includes('verify-email');
-        if (!onVeriaNotSignin) {
+        // Check if we're back on veria.cc
+        if (!currentUrl.includes('veria.cc')) {
+          return false; // Still on OAuth provider
+        }
+
+        // Check for OAuth-specific errors (these indicate server-side issues that need fixing)
+        const oauthErrors = [
+          'OAuthAccountNotLinked',
+          'OAuthCallback',
+          'OAuthSignin'
+        ];
+
+        const hasOAuthError = oauthErrors.some(err => currentUrl.includes(`error=${err}`));
+
+        if (hasOAuthError) {
+          // OAuth error detected - this requires diagnostic and fix
+          const errorType = oauthErrors.find(e => currentUrl.includes(e));
+          logger.warn(`OAuth error detected: ${errorType}`);
+          logger.warn(`URL: ${currentUrl}`);
+          // Return false to trigger error handling and fix cycle
+          return false;
+        }
+
+        // Normal success: on veria.cc, not on signin, not on verify-email
+        const callbackSuccess = !currentUrl.includes('/signin') &&
+                                !currentUrl.includes('verify-email');
+
+        if (!callbackSuccess) {
           logger.warn(`Callback failed - URL: ${currentUrl}`);
           logger.warn(`Expected veria.cc (not /signin or verify-email)`);
         }
-        return onVeriaNotSignin;
+
+        return callbackSuccess;
 
       case 'dashboard':
         // MUST be on veria.cc AND have dashboard-like URL
@@ -176,6 +200,10 @@ class OAuthOrchestrator {
 
     // Initialize state machine
     const stateMachine = new StateMachine(providerName, providerConfig.flow);
+
+    // Track flow-level retries to prevent infinite loops
+    let flowRetryCount = 0;
+    const maxFlowRetries = 3;
 
     try {
       await testExecutor.initialize();
@@ -282,6 +310,9 @@ Do NOT proceed to next step until the current step completes.`;
         // Preserve safety decision from action (required for API acknowledgement)
         if (action._safetyDecision) {
           result._safetyDecision = action._safetyDecision;
+          this.logger.debug(`Preserving safety decision for action ${action.name}:`, action._safetyDecision);
+        } else {
+          this.logger.debug(`No safety decision found for action ${action.name}`);
         }
 
         // Capture page state after action to get current URL
@@ -360,8 +391,86 @@ Do NOT proceed to next step until the current step completes.`;
             this.logger.warn(`Current URL: ${currentUrl}`);
 
             // Take screenshot of failed state
-            await testExecutor.captureState();
+            const failedState = await testExecutor.captureState();
 
+            // Check if this is an OAuth error
+            const isOAuthError = currentUrl.includes('error=OAuth');
+            const errorType = currentUrl.match(/error=([^&]+)/)?.[1];
+
+            if (isOAuthError) {
+              this.logger.warn(`OAuth error detected: ${errorType}`);
+
+              // Special handling for OAuthAccountNotLinked - this requires database/account setup
+              if (errorType === 'OAuthAccountNotLinked') {
+                this.logger.error('❌ OAuthAccountNotLinked Error - Cannot be auto-fixed');
+                this.logger.error('');
+                this.logger.error('This error means the email "test@veria.cc" is already registered');
+                this.logger.error('but linked to a DIFFERENT sign-in method (not GitHub).');
+                this.logger.error('');
+                this.logger.error('To fix this, you need to either:');
+                this.logger.error('  1. Use a different test email that is not already registered');
+                this.logger.error('  2. Delete the existing user and let OAuth create a new one');
+                this.logger.error('  3. Enable account linking in your NextAuth configuration');
+                this.logger.error('  4. Manually link the GitHub account to the existing user in the database');
+                this.logger.error('');
+                throw new Error('OAuthAccountNotLinked requires manual intervention - see above for solutions');
+              }
+
+              // For other OAuth errors, attempt diagnostic and fix
+              if (diagnostic && fix) {
+                this.logger.info('Attempting to diagnose and fix OAuth error...');
+
+                try {
+                  // Run diagnostic
+                  const diagnosticResult = await diagnostic.diagnoseRootCause({
+                    screenshot: failedState.screenshot,
+                    errorAnalysis: {
+                      errorDetected: true,
+                      errorMessage: `OAuth error: ${errorType}`,
+                      errorType: errorType
+                    },
+                    networkLogs: await testExecutor.getNetworkLogs(),
+                    pageUrl: currentUrl
+                  });
+
+                  // Propose fix
+                  const fixPlan = await fix.proposeFixPlan(diagnosticResult);
+                  await fix.showDiff(fixPlan);
+
+                  // Request approval if needed
+                  let approved = false;
+                  if (this.options.autoFix) {
+                    approved = true;
+                    this.logger.info('Auto-fix enabled, applying fix...');
+                  } else {
+                    this.logger.info('Fix requires manual approval (use --auto-fix to enable)');
+                    approved = false;
+                  }
+
+                  if (approved) {
+                    await fix.applyFix(fixPlan, true);
+
+                    // Check flow retry limit
+                    flowRetryCount++;
+                    if (flowRetryCount >= maxFlowRetries) {
+                      throw new Error(`Max flow retries (${maxFlowRetries}) reached. Unable to complete OAuth flow after multiple fix attempts.`);
+                    }
+
+                    this.logger.info(`Fix applied - retrying OAuth flow from beginning (attempt ${flowRetryCount + 1}/${maxFlowRetries + 1})...`);
+
+                    // Reset state machine and restart flow
+                    stateMachine.reset();
+                    computerUse.reset();
+                    await testExecutor.navigate(this.config.baseUrl);
+                    continue; // Restart the while loop
+                  }
+                } catch (fixError) {
+                  this.logger.error(`Fix attempt failed: ${fixError.message}`);
+                }
+              }
+            }
+
+            // If no fix was attempted or fix failed, use normal retry logic
             if (!stateMachine.retry()) {
               throw new Error(`Failed to verify ${currentState} state after max retries. Stuck at URL: ${currentUrl}`);
             }
@@ -415,7 +524,14 @@ Do NOT proceed to next step until the current step completes.`;
       await testExecutor.cleanup();
 
       this.logger.success(`✅ ${providerName} OAuth test PASSED`);
-      return { status: 'passed', provider: providerName, history: stateMachine.getHistory() };
+      this.logger.success(`✅ Successfully reached dashboard and completed full e2e flow`);
+
+      return {
+        status: 'passed',
+        provider: providerName,
+        flow: stateMachine.history,
+        flowRetries: flowRetryCount
+      };
 
     } catch (error) {
       this.logger.error(`❌ ${providerName} OAuth test FAILED:`, error.message);

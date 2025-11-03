@@ -65,6 +65,9 @@ class ComputerUseAgent {
         return null;
       }
 
+      // Log full response structure for debugging safety decisions
+      this.logger.debug('Full candidate keys:', Object.keys(response.candidates[0]));
+
       // Extract function call from response
       const functionCall = response.candidates[0].content.parts.find(
         part => part.functionCall
@@ -76,13 +79,29 @@ class ComputerUseAgent {
         return null;
       }
 
+      this.logger.debug('Function call part keys:', Object.keys(functionCall));
+
       const action = functionCall.functionCall;
 
       // Extract safety decision if present (required for function response acknowledgement)
-      const safetyDecision = response.candidates[0].safetyDecision || null;
+      // Check multiple possible locations in the response
+      let safetyDecision = null;
+
+      // Option 1: At candidate level
+      if (response.candidates[0].safetyDecision) {
+        safetyDecision = response.candidates[0].safetyDecision;
+        this.logger.debug('Safety decision found at candidate level');
+      }
+
+      // Option 2: At part level
+      if (functionCall.safetyDecision) {
+        safetyDecision = functionCall.safetyDecision;
+        this.logger.debug('Safety decision found at part level');
+      }
+
       if (safetyDecision) {
         action._safetyDecision = safetyDecision;
-        this.logger.debug('Safety decision present in response:', safetyDecision);
+        this.logger.debug('Safety decision stored:', safetyDecision);
       }
 
       // Add to conversation history
@@ -90,9 +109,13 @@ class ComputerUseAgent {
         role: 'user',
         parts: messages[messages.length - 1].parts
       });
+
+      // Preserve the full function call part including safety decision if present
+      const modelPart = { functionCall: action };
+
       this.conversationHistory.push({
         role: 'model',
-        parts: [{ functionCall: action }]
+        parts: [modelPart]
       });
 
       // Prune history to prevent memory issues (keep only recent turns)
@@ -131,10 +154,18 @@ class ComputerUseAgent {
       }
     };
 
-    // Acknowledge safety decision if it was present in the original function call
+    // Always include safety decision in function response
+    // The Gemini Computer Use API requires this even if not explicitly provided in the call
+    // Use the stored safety decision if available, otherwise use default "safe" decision
     if (result._safetyDecision) {
-      functionResponsePart.functionResponse.safetyDecision = result._safetyDecision;
-      this.logger.debug('Acknowledging safety decision in function response');
+      functionResponsePart.safetyDecision = result._safetyDecision;
+      this.logger.debug('Acknowledging explicit safety decision');
+    } else {
+      // Provide default safety acknowledgement
+      functionResponsePart.safetyDecision = {
+        decision: 'SAFE'
+      };
+      this.logger.debug('Providing default SAFE safety decision');
     }
 
     this.conversationHistory.push({
