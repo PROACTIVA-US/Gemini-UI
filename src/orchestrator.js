@@ -230,10 +230,13 @@ class OAuthOrchestrator {
 Do NOT proceed to next step until the current step completes.`;
           } else if (providerName === 'github') {
             goal += `You are on GitHub's login page. Complete these steps:
-1. If you see username field, enter: ${JSON.stringify(testCredentials.username)}
-2. Enter password: ${testCredentials.password}
-3. Click the green "Sign in" button to submit the form
-4. Wait for redirect back to veria.cc`;
+1. Click the username/email input field
+2. Type username: ${JSON.stringify(testCredentials.username)}
+3. Click the password input field
+4. Type password: ${testCredentials.password}
+5. Click the green "Sign in" button to submit the form
+6. AFTER clicking Sign in, WAIT and observe - the page will redirect to veria.cc
+7. Do NOT take any more actions until you see the page change to veria.cc domain`;
           } else {
             goal += `Enter credentials: ${JSON.stringify(testCredentials)} and click the submit button to log in.`;
           }
