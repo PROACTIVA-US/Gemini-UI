@@ -22,6 +22,12 @@ class Logger {
     console.error(`❌ ${message}`, data || '');
   }
 
+  warn(message, data = null) {
+    const log = { level: 'WARN', message, data, timestamp: new Date().toISOString() };
+    this.logs.push(log);
+    console.warn(`⚠️  ${message}`, data || '');
+  }
+
   debug(message, data = null) {
     const log = { level: 'DEBUG', message, data, timestamp: new Date().toISOString() };
     this.logs.push(log);

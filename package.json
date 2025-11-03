@@ -7,8 +7,17 @@
   "scripts": {
     "test": "node src/orchestrator.js --provider github --debug",
     "test:all": "node src/orchestrator.js --all",
+    "test:email": "node src/orchestrator.js --provider email",
     "test:github": "node src/orchestrator.js --provider github",
-    "test:google": "node src/orchestrator.js --provider google"
+    "test:google": "node src/orchestrator.js --provider google",
+    "rotate:secrets": "node src/secret-rotation.js",
+    "rotate:dry-run": "node src/secret-rotation.js --dry-run",
+    "rotate:stripe": "node src/secret-rotation.js --service stripe",
+    "rotate:resend": "node src/secret-rotation.js --service resend",
+    "rotate:github": "node src/secret-rotation.js --service github-oauth",
+    "rotate:google": "node src/secret-rotation.js --service google-oauth",
+    "rotate:supabase": "node src/secret-rotation.js --service supabase",
+    "rotate:auto": "node src/secret-rotation.js --auto-approve --test-after"
   },
   "keywords": [
     "gemini",
