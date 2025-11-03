@@ -285,7 +285,20 @@ Do NOT proceed to next step until the current step completes.`;
         }
 
         // Capture page state after action to get current URL
-        const postActionState = await testExecutor.captureState();
+        // Note: May fail during navigation, handle gracefully
+        let postActionState;
+        try {
+          postActionState = await testExecutor.captureState();
+        } catch (error) {
+          if (error.message && error.message.includes('Execution context')) {
+            // Page is navigating, wait and retry
+            this.logger.debug('Page navigating, waiting before retry...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            postActionState = await testExecutor.captureState();
+          } else {
+            throw error; // Rethrow if not a navigation error
+          }
+        }
 
         // Report result back to Gemini with current URL (required by Computer Use API)
         await computerUse.reportActionResult(result, postActionState.metadata.url);
@@ -312,9 +325,22 @@ Do NOT proceed to next step until the current step completes.`;
           }
 
           // Verify state transition based on URL
-          const afterActionState = await testExecutor.captureState();
-          const currentUrl = afterActionState.metadata.url;
+          // Handle potential navigation errors during redirects
+          let afterActionState;
+          try {
+            afterActionState = await testExecutor.captureState();
+          } catch (error) {
+            if (error.message && error.message.includes('Execution context')) {
+              // Still navigating after wait, give it more time
+              this.logger.debug('Page still navigating after wait, retrying...');
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              afterActionState = await testExecutor.captureState();
+            } else {
+              throw error;
+            }
+          }
 
+          const currentUrl = afterActionState.metadata.url;
           this.logger.debug(`After ${currentState}, URL is: ${currentUrl}`);
 
           // Verify state transition using helper method
