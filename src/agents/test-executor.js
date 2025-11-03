@@ -278,14 +278,6 @@ class TestExecutorAgent {
           await this.navigate(args.url);
           return { success: true, action: name, actionName: name, url: args.url };
 
-        case 'open_web_browser':
-          // Same as navigate - open URL in browser
-          if (!args.url || typeof args.url !== 'string') {
-            return { success: false, actionName: name, error: 'Missing or invalid url' };
-          }
-          await this.navigate(args.url);
-          return { success: true, action: name, actionName: name, url: args.url };
-
         case 'key_combination':
           // Parse key combination (e.g., "Control+C")
           await this.page.keyboard.press(args.keys);
@@ -323,62 +315,7 @@ class TestExecutorAgent {
     }
   }
 
-  /**
-   * Get CDP endpoint URL for external DevTools connection
-   * @returns {string} CDP WebSocket endpoint URL
-   */
-  getCDPEndpoint() {
-    return `http://127.0.0.1:${this.cdpPort}`;
-  }
-
-  /**
-   * Start performance tracing (if not already started)
-   * Can be called mid-test to start focused tracing
-   */
-  async startTrace() {
-    if (!this.traceEnabled && this.context) {
-      await this.context.tracing.start({
-        screenshots: true,
-        snapshots: true,
-        sources: true
-      });
-      this.traceEnabled = true;
-      this.logger.success('Tracing started');
-    } else {
-      this.logger.debug('Tracing already active');
-    }
-  }
-
-  /**
-   * Stop and save trace to a specific path
-   * @param {string} customPath - Optional custom path for trace file
-   */
-  async stopTrace(customPath = null) {
-    if (this.traceEnabled && this.context) {
-      const savePath = customPath || this.tracePath;
-      await this.context.tracing.stop({ path: savePath });
-      this.traceEnabled = false;
-      this.logger.success(`Trace stopped and saved to: ${savePath}`);
-      return savePath;
-    } else {
-      this.logger.warn('No active trace to stop');
-      return null;
-    }
-  }
-
-  /**
-   * Export trace in custom format or location
-   * @param {string} outputPath - Where to save the trace
-   */
-  async exportTrace(outputPath) {
-    if (!this.tracePath || !fsSync.existsSync(this.tracePath)) {
-      throw new Error('No trace file available to export');
-    }
-    await fs.copyFile(this.tracePath, outputPath);
-    this.logger.success(`Trace exported to: ${outputPath}`);
-  }
-
-  async cleanup(options = {}) {
+  async cleanup() {
     this.logger.info('Cleaning up browser...');
 
     // Stop and save trace before closing context

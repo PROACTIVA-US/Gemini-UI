@@ -65,9 +65,6 @@ class ComputerUseAgent {
         return null;
       }
 
-      // Log full response structure for debugging safety decisions
-      this.logger.debug('Full candidate keys:', Object.keys(response.candidates[0]));
-
       // Extract function call from response
       const functionCall = response.candidates[0].content.parts.find(
         part => part.functionCall
@@ -79,43 +76,16 @@ class ComputerUseAgent {
         return null;
       }
 
-      this.logger.debug('Function call part keys:', Object.keys(functionCall));
-
       const action = functionCall.functionCall;
-
-      // Extract safety decision if present (required for function response acknowledgement)
-      // Check multiple possible locations in the response
-      let safetyDecision = null;
-
-      // Option 1: At candidate level
-      if (response.candidates[0].safetyDecision) {
-        safetyDecision = response.candidates[0].safetyDecision;
-        this.logger.debug('Safety decision found at candidate level');
-      }
-
-      // Option 2: At part level
-      if (functionCall.safetyDecision) {
-        safetyDecision = functionCall.safetyDecision;
-        this.logger.debug('Safety decision found at part level');
-      }
-
-      if (safetyDecision) {
-        action._safetyDecision = safetyDecision;
-        this.logger.debug('Safety decision stored:', safetyDecision);
-      }
 
       // Add to conversation history
       this.conversationHistory.push({
         role: 'user',
         parts: messages[messages.length - 1].parts
       });
-
-      // Preserve the full function call part including safety decision if present
-      const modelPart = { functionCall: action };
-
       this.conversationHistory.push({
         role: 'model',
-        parts: [modelPart]
+        parts: [{ functionCall: action }]
       });
 
       // Prune history to prevent memory issues (keep only recent turns)
@@ -146,82 +116,15 @@ class ComputerUseAgent {
       url: currentUrl || result.url || ''
     };
 
-    // Build function response part
-    const functionResponsePart = {
-      functionResponse: {
-        name: result.actionName,
-        response: response
-      }
-    };
-
-    // Always include safety decision in function response
-    // The Gemini Computer Use API requires this even if not explicitly provided in the call
-    // Use the stored safety decision if available, otherwise use default "safe" decision
-    if (result._safetyDecision) {
-      functionResponsePart.safetyDecision = result._safetyDecision;
-      this.logger.debug('Acknowledging explicit safety decision');
-    } else {
-      // Provide default safety acknowledgement
-      functionResponsePart.safetyDecision = {
-        decision: 'SAFE'
-      };
-      this.logger.debug('Providing default SAFE safety decision');
-    }
-
     this.conversationHistory.push({
       role: 'function',
-      parts: [functionResponsePart]
+      parts: [{
+        functionResponse: {
+          name: result.actionName,
+          response: response
+        }
+      }]
     });
-  }
-
-  /**
-   * Execute a high-level task using Computer Use API
-   * @param {object} options - Task options
-   * @param {string} options.instruction - What to do
-   * @param {string} options.screenshot - Base64 screenshot
-   * @param {number} options.timeout - Max time in ms
-   * @returns {Promise<object>} Task result
-   */
-  async executeTask(options) {
-    const { instruction, screenshot, timeout = 30000 } = options;
-
-    this.logger.info(`Executing task: ${instruction}`);
-
-    const startTime = Date.now();
-    const maxAttempts = 5;
-    let attempt = 0;
-
-    while (attempt < maxAttempts && (Date.now() - startTime) < timeout) {
-      attempt++;
-
-      try {
-        // Get next action from Gemini
-        const action = await this.getNextAction(screenshot, instruction, {
-          attempt,
-          maxAttempts
-        });
-
-        if (!action) {
-          this.logger.warn('No action returned from Computer Use API');
-          return { success: false, error: 'No action returned' };
-        }
-
-        this.logger.success(`Task action: ${action.name}`);
-        return { success: true, action };
-
-      } catch (error) {
-        this.logger.error(`Task execution failed: ${error.message}`);
-
-        if (attempt >= maxAttempts) {
-          return { success: false, error: error.message };
-        }
-
-        // Wait before retry
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-    }
-
-    return { success: false, error: 'Timeout or max attempts reached' };
   }
 
   /**

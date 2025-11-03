@@ -222,79 +222,16 @@ class OAuthOrchestrator {
         // Capture current state
         const capturedState = await testExecutor.captureState();
 
-        // Log current page state before action
-        this.logger.debug(`[${currentState}] Current page state:`);
-        this.logger.debug(`  URL: ${capturedState.metadata.url}`);
-        this.logger.debug(`  Title: ${capturedState.metadata.title}`);
-        this.logger.debug(`  Screenshot: ${capturedState.screenshot ? 'captured' : 'none'}`);
-
-        // Resolve test credentials from provider config
-        const testCredentials = {};
-        if (providerConfig.testAccount) {
-          for (const [key, value] of Object.entries(providerConfig.testAccount)) {
-            testCredentials[key] = this.resolveEnvVar(value, providerConfig);
-          }
-        }
-
-        // Build detailed goal based on current state
-        let goal = `You are testing ${providerName} sign-in flow on veria.cc. `;
-
-        if (currentState === 'landing') {
-          if (providerName === 'email') {
-            goal += `Look for the email/password login form on the page and prepare to enter credentials.`;
-          } else {
-            goal += `Look for the "Sign in with ${providerName}" button and click it.`;
-          }
-        } else if (currentState === 'email_login') {
-          goal += `You are on the veria.cc login form. Enter email and password credentials: ${JSON.stringify(testCredentials)} into the form fields and click the submit/sign-in button to log in.`;
-        } else if (currentState === 'provider_auth') {
-          // Multi-step instructions for OAuth providers
-          if (providerName === 'google') {
-            goal += `You are on Google's login page. Complete these steps in sequence:
-1. Enter email: ${JSON.stringify(testCredentials.email)} and click "Next" button
-2. Wait for password page to load
-3. Enter password: ${testCredentials.password} and click "Sign in" button
-4. If you see a consent/permissions screen, click "Allow" or "Continue"
-Do NOT proceed to next step until the current step completes.`;
-          } else if (providerName === 'github') {
-            goal += `You are on GitHub's login page. Complete these steps:
-1. Click the username/email input field
-2. Type username: ${JSON.stringify(testCredentials.username)}
-3. Click the password input field
-4. Type password: ${testCredentials.password}
-5. Click the green "Sign in" button to submit the form
-6. AFTER clicking Sign in, WAIT and observe - the page will redirect to veria.cc
-7. Do NOT take any more actions until you see the page change to veria.cc domain`;
-          } else {
-            goal += `Enter credentials: ${JSON.stringify(testCredentials)} and click the submit button to log in.`;
-          }
-        } else if (currentState === 'callback') {
-          goal += `The OAuth authentication is completing. Wait for automatic redirect back to veria.cc. If you see a consent/permission screen, click Allow/Continue. If already back on veria.cc, wait for dashboard to load.`;
-        } else if (currentState === 'dashboard') {
-          goal += `You should now be on the veria.cc dashboard (NOT the signin page). Verify you see user profile, API keys, dashboard navigation, or a sign-out button. The URL should be veria.cc/dashboard or similar, not /signin.`;
-        } else if (currentState === 'signout') {
-          goal += `You are logged in to veria.cc dashboard. Find the sign-out/logout button (usually in user menu or navigation) and click it to sign out. After signing out, you should be redirected back to the landing/signin page.`;
-        }
-
         // Get Computer Use action directly (no translation gap!)
         const action = await computerUse.getNextAction(
           capturedState.screenshot,
-          goal,
+          `Navigate through ${currentState} state for ${providerName} OAuth`,
           {
             state: currentState,
             url: capturedState.metadata.url,
-            provider: providerName,
-            credentials: testCredentials
+            provider: providerName
           }
         );
-
-        // Log action being requested
-        if (action) {
-          this.logger.debug(`[${currentState}] Requesting action: ${action.name}`);
-          this.logger.debug(`  Args: ${JSON.stringify(action.args || {})}`);
-        } else {
-          this.logger.error(`[${currentState}] No action received from Computer Use API`);
-        }
 
         if (!action) {
           this.logger.error('No action received from Computer Use API');
@@ -307,174 +244,13 @@ Do NOT proceed to next step until the current step completes.`;
         // Execute Computer Use action directly
         const result = await testExecutor.executeComputerUseAction(action);
 
-        // Preserve safety decision from action (required for API acknowledgement)
-        if (action._safetyDecision) {
-          result._safetyDecision = action._safetyDecision;
-          this.logger.debug(`Preserving safety decision for action ${action.name}:`, action._safetyDecision);
-        } else {
-          this.logger.debug(`No safety decision found for action ${action.name}`);
-        }
-
-        // Capture page state after action to get current URL
-        // Note: May fail during navigation, handle gracefully
-        let postActionState;
-        try {
-          postActionState = await testExecutor.captureState();
-        } catch (error) {
-          if (error.message && error.message.includes('Execution context')) {
-            // Page is navigating, wait and retry
-            this.logger.debug('Page navigating, waiting before retry...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            postActionState = await testExecutor.captureState();
-          } else {
-            throw error; // Rethrow if not a navigation error
-          }
-        }
-
-        // Report result back to Gemini with current URL (required by Computer Use API)
-        await computerUse.reportActionResult(result, postActionState.metadata.url);
+        // Report result back to Gemini
+        await computerUse.reportActionResult(result);
 
         // Check if action succeeded
         if (result.success) {
           this.logger.success(`Action ${action.name} executed successfully`);
-
-          // Increment action counter and check limit
-          stateMachine.actionsInCurrentState++;
-
-          if (stateMachine.actionsInCurrentState >= stateMachine.maxActionsPerState) {
-            throw new Error(`Exceeded max actions (${stateMachine.maxActionsPerState}) for state: ${currentState}`);
-          }
-
-          // Wait for page to settle after action (especially for redirects)
-          await new Promise(resolve => setTimeout(resolve, 5000));  // Changed from 2000 to 5000
-
-          // Add conditional wait after the base wait
-          if (currentState === 'provider_auth' || currentState === 'callback') {
-            // OAuth redirects need more time
-            this.logger.debug(`Waiting extra time for ${currentState} redirect...`);
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-
-          // Verify state transition based on URL
-          // Handle potential navigation errors during redirects
-          let afterActionState;
-          try {
-            afterActionState = await testExecutor.captureState();
-          } catch (error) {
-            if (error.message && error.message.includes('Execution context')) {
-              // Still navigating after wait, give it more time
-              this.logger.debug('Page still navigating after wait, retrying...');
-              await new Promise(resolve => setTimeout(resolve, 3000));
-              afterActionState = await testExecutor.captureState();
-            } else {
-              throw error;
-            }
-          }
-
-          const currentUrl = afterActionState.metadata.url;
-          this.logger.debug(`After ${currentState}, URL is: ${currentUrl}`);
-
-          // Verify state transition using helper method
-          const stateVerified = this.verifyStateTransition(
-            currentState,
-            currentUrl,
-            providerName,
-            stateMachine
-          );
-
-          if (stateVerified) {
-            this.logger.success(`✓ ${currentState} → ${stateMachine.getNextState() || 'COMPLETE'}`);
-            this.logger.success(`  Actions performed: ${stateMachine.actionsInCurrentState}`);
-            stateMachine.advance();
-          } else {
-            this.logger.warn(`State verification failed for ${currentState}`);
-            this.logger.warn(`Current URL: ${currentUrl}`);
-
-            // Take screenshot of failed state
-            const failedState = await testExecutor.captureState();
-
-            // Check if this is an OAuth error
-            const isOAuthError = currentUrl.includes('error=OAuth');
-            const errorType = currentUrl.match(/error=([^&]+)/)?.[1];
-
-            if (isOAuthError) {
-              this.logger.warn(`OAuth error detected: ${errorType}`);
-
-              // Special handling for OAuthAccountNotLinked - this requires database/account setup
-              if (errorType === 'OAuthAccountNotLinked') {
-                this.logger.error('❌ OAuthAccountNotLinked Error - Cannot be auto-fixed');
-                this.logger.error('');
-                this.logger.error('This error means the email "test@veria.cc" is already registered');
-                this.logger.error('but linked to a DIFFERENT sign-in method (not GitHub).');
-                this.logger.error('');
-                this.logger.error('To fix this, you need to either:');
-                this.logger.error('  1. Use a different test email that is not already registered');
-                this.logger.error('  2. Delete the existing user and let OAuth create a new one');
-                this.logger.error('  3. Enable account linking in your NextAuth configuration');
-                this.logger.error('  4. Manually link the GitHub account to the existing user in the database');
-                this.logger.error('');
-                throw new Error('OAuthAccountNotLinked requires manual intervention - see above for solutions');
-              }
-
-              // For other OAuth errors, attempt diagnostic and fix
-              if (diagnostic && fix) {
-                this.logger.info('Attempting to diagnose and fix OAuth error...');
-
-                try {
-                  // Run diagnostic
-                  const diagnosticResult = await diagnostic.diagnoseRootCause({
-                    screenshot: failedState.screenshot,
-                    errorAnalysis: {
-                      errorDetected: true,
-                      errorMessage: `OAuth error: ${errorType}`,
-                      errorType: errorType
-                    },
-                    networkLogs: await testExecutor.getNetworkLogs(),
-                    pageUrl: currentUrl
-                  });
-
-                  // Propose fix
-                  const fixPlan = await fix.proposeFixPlan(diagnosticResult);
-                  await fix.showDiff(fixPlan);
-
-                  // Request approval if needed
-                  let approved = false;
-                  if (this.options.autoFix) {
-                    approved = true;
-                    this.logger.info('Auto-fix enabled, applying fix...');
-                  } else {
-                    this.logger.info('Fix requires manual approval (use --auto-fix to enable)');
-                    approved = false;
-                  }
-
-                  if (approved) {
-                    await fix.applyFix(fixPlan, true);
-
-                    // Check flow retry limit
-                    flowRetryCount++;
-                    if (flowRetryCount >= maxFlowRetries) {
-                      throw new Error(`Max flow retries (${maxFlowRetries}) reached. Unable to complete OAuth flow after multiple fix attempts.`);
-                    }
-
-                    this.logger.info(`Fix applied - retrying OAuth flow from beginning (attempt ${flowRetryCount + 1}/${maxFlowRetries + 1})...`);
-
-                    // Reset state machine and restart flow
-                    stateMachine.reset();
-                    computerUse.reset();
-                    await testExecutor.navigate(this.config.baseUrl);
-                    continue; // Restart the while loop
-                  }
-                } catch (fixError) {
-                  this.logger.error(`Fix attempt failed: ${fixError.message}`);
-                }
-              }
-            }
-
-            // If no fix was attempted or fix failed, use normal retry logic
-            if (!stateMachine.retry()) {
-              throw new Error(`Failed to verify ${currentState} state after max retries. Stuck at URL: ${currentUrl}`);
-            }
-          }
+          stateMachine.advance();
         } else {
           this.logger.error(`Action ${action.name} failed: ${result.error}`);
 

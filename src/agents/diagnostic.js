@@ -138,7 +138,7 @@ Respond in JSON format:
 
       this.logger.success(`Root cause identified: ${diagnostic.rootCause} (confidence: ${diagnostic.confidence})`);
 
-      // Transform to format expected by FixAgent
+      // Transform to format expected by FixAgent for backward compatibility
       return {
         type: 'oauth_error',
         message: diagnostic.rootCause,
